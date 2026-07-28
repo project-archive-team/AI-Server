@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import json
 import os
 from pathlib import Path
 from uuid import uuid4
 import numpy as np
-from typing import Any
+from typing import Any, Optional
 from pydantic import BaseModel
 from google.genai import types
 
@@ -131,7 +133,7 @@ class SimpleVectorStore:
             self._save()
         return deleted_count
 
-    def search(self, query_embedding: list[float], user_id: int, project_id: int | None = None, top_k: int = 5) -> list[dict[str, Any]]:
+    def search(self, query_embedding: list[float], user_id: int, project_id: Optional[int] = None, top_k: int = 5) -> list[dict[str, Any]]:
         scored_documents: list[dict[str, Any]] = []
         for document in self.documents:
             metadata = document.get("metadata", {})

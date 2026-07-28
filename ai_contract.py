@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
@@ -23,10 +23,10 @@ class Chunk(BaseModel):
     artifactId: int
     type: Literal["COMMIT", "CODE", "DOC", "MEETING"]
     title: str
-    path: str | None = None
-    url: str | None = None
-    author: str | None = None
-    occurredAt: datetime | None = None
+    path: Optional[str] = None
+    url: Optional[str] = None
+    author: Optional[str] = None
+    occurredAt: Optional[datetime] = None
     seq: int = 0
     text: str = Field(min_length=1)
 
