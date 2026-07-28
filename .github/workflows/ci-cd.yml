@@ -23,6 +23,7 @@ jobs:
     timeout-minutes: 10
     env:
       GEMINI_API_KEY: ci-placeholder-key
+      PYTHONPATH: .
     steps:
       - uses: actions/checkout@v4
 
