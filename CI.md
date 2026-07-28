@@ -9,7 +9,7 @@ GitHub Actions의 `.github/workflows/ci-cd.yml`은 GitHub가 제공하는 Ubuntu
 
 검증 항목:
 
-1. Python 3.12 설치
+1. EC2 운영 환경과 동일한 Python 3.9 설치
 2. `requirements-dev.txt` 의존성 설치
 3. 전체 Python 소스 컴파일
 4. pytest 실행
