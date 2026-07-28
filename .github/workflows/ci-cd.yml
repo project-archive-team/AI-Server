@@ -1,0 +1,131 @@
+name: Server Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: server-test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  test:
+    name: Test on Ubuntu
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GEMINI_API_KEY: ci-placeholder-key
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements-dev.txt
+
+      - name: Compile source
+        run: python -m compileall -q .
+
+      - name: Run tests
+        run: pytest -q
+
+  deploy:
+    name: Deploy to EC2
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+
+      - name: Prepare release
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+        run: |
+          tar \
+            --exclude=.git \
+            --exclude=.github \
+            --exclude=.venv \
+            --exclude=.env \
+            --exclude=__pycache__ \
+            --exclude=.pytest_cache \
+            --exclude=data \
+            -czf /tmp/ai-server.tar.gz .
+          {
+            printf 'GEMINI_API_KEY=%s\n' "$GEMINI_API_KEY"
+            printf 'BACKEND_URL=%s\n' "$BACKEND_URL"
+          } > /tmp/ai-server.env
+          chmod 600 /tmp/ai-server.env
+
+      - name: Upload release
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          scp -i ~/.ssh/ec2_key /tmp/ai-server.tar.gz /tmp/ai-server.env \
+            "$EC2_USER@$EC2_HOST:/tmp/"
+
+      - name: Activate release
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          ssh -i ~/.ssh/ec2_key "$EC2_USER@$EC2_HOST" \
+            "RELEASE_SHA='$RELEASE_SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          app_root="$HOME/ai-server"
+          release_dir="$app_root/releases/$RELEASE_SHA"
+
+          mkdir -p "$release_dir" "$app_root/shared/data"
+          tar -xzf /tmp/ai-server.tar.gz -C "$release_dir"
+          mv /tmp/ai-server.env "$app_root/.env"
+          chmod 600 "$app_root/.env"
+
+          python3 -m venv "$release_dir/.venv"
+          "$release_dir/.venv/bin/python" -m pip install --upgrade pip
+          "$release_dir/.venv/bin/pip" install -r "$release_dir/requirements.txt"
+
+          ln -sfn "$app_root/shared/data" "$release_dir/data"
+          ln -sfn "$app_root/.env" "$release_dir/.env"
+          ln -sfn "$release_dir" "$app_root/current"
+
+          sudo cp "$release_dir/deploy/project-archive-ai.service" \
+            /etc/systemd/system/project-archive-ai.service
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now project-archive-ai
+          sudo systemctl restart project-archive-ai
+
+          for attempt in {1..12}; do
+            if curl --fail --silent http://127.0.0.1:8000/health; then
+              exit 0
+            fi
+            sleep 5
+          done
+
+          sudo journalctl -u project-archive-ai --no-pager -n 50
+          exit 1
+          REMOTE
