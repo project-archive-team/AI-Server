@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field
 from schemas import ChatRequest
 from services import (
     SimpleVectorStore,
-    build_sources,
     create_embeddings,
     generate_answer,
     retrieve_project_context,
@@ -46,16 +45,29 @@ class SummaryRequest(BaseModel):
     since: datetime
 
 
-def _citations(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "artifactId": source.get("artifact_id"),
-            "title": source.get("source_name"),
-            "url": source.get("source_url"),
-            "snippet": source.get("snippet", ""),
-        }
-        for source in sources
-    ]
+class DeleteArtifactsRequest(BaseModel):
+    projectId: int
+    artifactIds: list[int] = Field(min_length=1)
+
+
+def _citations(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    citations: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for document in documents:
+        metadata = document.get("metadata", {})
+        artifact_id = metadata.get("artifact_id")
+        if artifact_id is None or artifact_id in seen:
+            continue
+        seen.add(artifact_id)
+        citations.append(
+            {
+                "artifactId": artifact_id,
+                "title": metadata.get("source_name"),
+                "url": metadata.get("source_url"),
+                "snippet": document.get("text", "")[:240],
+            }
+        )
+    return citations
 
 
 @router.post("/index")
@@ -100,18 +112,30 @@ def index_documents(request: IndexRequest) -> dict[str, Any]:
 
     store = SimpleVectorStore()
     artifact_ids = {chunk.artifactId for chunk in request.chunks}
-    store.documents = [
-        doc for doc in store.documents
-        if not (
-            doc.get("metadata", {}).get("project_id") == request.projectId
-            and doc.get("metadata", {}).get("artifact_id") in artifact_ids
-        )
-    ]
-    store.add_documents(documents)
+    store.replace_artifacts(request.projectId, artifact_ids, documents)
     return {"indexed": len(documents), "techStack": sorted(detected)}
 
 
-def _answer(project_id: int, question: str, mode: str = "general") -> dict[str, Any]:
+@router.post("/index/delete")
+def delete_artifacts(request: DeleteArtifactsRequest) -> dict[str, int]:
+    deleted = SimpleVectorStore().delete_artifacts(
+        request.projectId,
+        set(request.artifactIds),
+    )
+    return {"deleted": deleted}
+
+
+@router.delete("/index/projects/{project_id}")
+def delete_project_index(project_id: int) -> dict[str, int]:
+    return {"deleted": SimpleVectorStore().delete_project(project_id)}
+
+
+def _answer(
+    project_id: int,
+    question: str,
+    mode: str = "general",
+    occurred_since: Optional[datetime] = None,
+) -> dict[str, Any]:
     chat_request = ChatRequest(
         user_id=0,
         project_id=project_id,
@@ -119,13 +143,9 @@ def _answer(project_id: int, question: str, mode: str = "general") -> dict[str, 
         answer_mode=mode,
         top_k=8,
     )
-    docs = retrieve_project_context(chat_request)
+    docs = retrieve_project_context(chat_request, occurred_since=occurred_since)
     answer = generate_answer(chat_request, docs)
-    sources = build_sources(docs)
-    for source, doc in zip(sources, docs):
-        source["artifact_id"] = doc.get("metadata", {}).get("artifact_id")
-        source["snippet"] = doc.get("text", "")[:240]
-    return {"answer": answer, "citations": _citations(sources)}
+    return {"answer": answer, "citations": _citations(docs)}
 
 
 @router.post("/chat")
@@ -138,6 +158,7 @@ def summary(request: SummaryRequest) -> dict[str, str]:
     result = _answer(
         request.projectId,
         f"{request.since.isoformat()} 이후의 커밋과 회의록, 주요 진행 상황을 요약해줘.",
+        occurred_since=request.since,
     )
     return {"summary": result["answer"]}
 

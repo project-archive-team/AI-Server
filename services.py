@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 import numpy as np
@@ -89,11 +91,15 @@ def cosine_similarity(vector_a: list[float], vector_b: list[float]) -> float:
 # 3-2. 로컬 JSON 기반 Vector Store
 # ------------------------------------------------------------
 
+_STORE_LOCK = threading.RLock()
+
+
 class SimpleVectorStore:
-    def __init__(self, path=STORE_PATH):
-        self.path = path
+    def __init__(self, path: Optional[Path] = None):
+        self.path = path or STORE_PATH
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.documents = self._load()
+        with _STORE_LOCK:
+            self.documents = self._load()
 
     def _load(self) -> list[dict[str, Any]]:
         if not self.path.exists():
@@ -109,38 +115,111 @@ class SimpleVectorStore:
         return data
 
     def _save(self) -> None:
-        with self.path.open("w", encoding="utf-8") as file:
+        temporary_path = self.path.with_suffix(self.path.suffix + ".tmp")
+        with temporary_path.open("w", encoding="utf-8") as file:
             json.dump(self.documents, file, ensure_ascii=False, indent=2)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary_path, self.path)
 
     def add_documents(self, documents: list[dict[str, Any]]) -> None:
         if not documents:
             return
-        self.documents.extend(documents)
-        self._save()
+        with _STORE_LOCK:
+            self.documents = self._load()
+            self.documents.extend(documents)
+            self._save()
+
+    def replace_artifacts(
+        self,
+        project_id: int,
+        artifact_ids: set[int],
+        documents: list[dict[str, Any]],
+    ) -> None:
+        """Replace every indexed chunk for the supplied artifacts atomically."""
+        with _STORE_LOCK:
+            self.documents = [
+                document
+                for document in self._load()
+                if not (
+                    document.get("metadata", {}).get("project_id") == project_id
+                    and document.get("metadata", {}).get("artifact_id") in artifact_ids
+                )
+            ]
+            self.documents.extend(documents)
+            self._save()
 
     def delete_source(self, user_id: int, project_id: int, source_name: str) -> int:
-        before_count = len(self.documents)
-        self.documents = [
-            doc for doc in self.documents
-            if not (
-                doc.get("metadata", {}).get("user_id") == user_id
-                and doc.get("metadata", {}).get("project_id") == project_id
-                and doc.get("metadata", {}).get("source_name") == source_name
-            )
-        ]
-        deleted_count = before_count - len(self.documents)
-        if deleted_count > 0:
-            self._save()
-        return deleted_count
+        with _STORE_LOCK:
+            current = self._load()
+            self.documents = [
+                doc for doc in current
+                if not (
+                    doc.get("metadata", {}).get("user_id") == user_id
+                    and doc.get("metadata", {}).get("project_id") == project_id
+                    and doc.get("metadata", {}).get("source_name") == source_name
+                )
+            ]
+            deleted_count = len(current) - len(self.documents)
+            if deleted_count:
+                self._save()
+            return deleted_count
 
-    def search(self, query_embedding: list[float], user_id: int, project_id: Optional[int] = None, top_k: int = 5) -> list[dict[str, Any]]:
+    def delete_artifacts(self, project_id: int, artifact_ids: set[int]) -> int:
+        with _STORE_LOCK:
+            current = self._load()
+            self.documents = [
+                document
+                for document in current
+                if not (
+                    document.get("metadata", {}).get("project_id") == project_id
+                    and document.get("metadata", {}).get("artifact_id") in artifact_ids
+                )
+            ]
+            deleted_count = len(current) - len(self.documents)
+            if deleted_count:
+                self._save()
+            return deleted_count
+
+    def delete_project(self, project_id: int) -> int:
+        with _STORE_LOCK:
+            current = self._load()
+            self.documents = [
+                document
+                for document in current
+                if document.get("metadata", {}).get("project_id") != project_id
+            ]
+            deleted_count = len(current) - len(self.documents)
+            if deleted_count:
+                self._save()
+            return deleted_count
+
+    def search(
+        self,
+        query_embedding: list[float],
+        user_id: int,
+        project_id: Optional[int] = None,
+        top_k: int = 5,
+        occurred_since: Optional[datetime] = None,
+    ) -> list[dict[str, Any]]:
+        with _STORE_LOCK:
+            documents = self._load()
         scored_documents: list[dict[str, Any]] = []
-        for document in self.documents:
+        for document in documents:
             metadata = document.get("metadata", {})
             if metadata.get("user_id") != user_id:
                 continue
             if project_id is not None and metadata.get("project_id") != project_id:
                 continue
+            if occurred_since is not None:
+                occurred_at = metadata.get("occurred_at")
+                if not occurred_at:
+                    continue
+                try:
+                    if datetime.fromisoformat(occurred_at) < occurred_since:
+                        continue
+                except (TypeError, ValueError):
+                    continue
 
             embedding = document.get("embedding")
             if not embedding:
@@ -304,7 +383,10 @@ def ingest_project_document(request: DocumentRequest) -> int:
     return len(documents)
 
 
-def retrieve_project_context(request: ChatRequest) -> list[dict[str, Any]]:
+def retrieve_project_context(
+    request: ChatRequest,
+    occurred_since: Optional[datetime] = None,
+) -> list[dict[str, Any]]:
     query_embedding = create_embedding(request.question)
     vector_store = SimpleVectorStore()
     return vector_store.search(
@@ -312,6 +394,7 @@ def retrieve_project_context(request: ChatRequest) -> list[dict[str, Any]]:
         user_id=request.user_id,
         project_id=request.project_id,
         top_k=request.top_k,
+        occurred_since=occurred_since,
     )
 
 
