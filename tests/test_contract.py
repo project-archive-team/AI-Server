@@ -164,3 +164,248 @@ def test_interview_prompt_requests_answers_for_each_follow_up_question() -> None
     assert "각 질문 바로 아래" in instruction
     assert "**추천 답변**" in instruction
     assert "없는 사실이나 수치를 만들지 않습니다" in instruction
+
+
+def _retrieved_document() -> dict:
+    return {
+        "text": "Redis 캐시를 도입했고 기본 TTL을 30분으로 설정했다.",
+        "score": 0.91,
+        "metadata": {
+            "artifact_id": 21,
+            "project_id": 7,
+            "source_name": "CacheService.java",
+            "source_url": "https://example.com/cache",
+        },
+    }
+
+
+def test_career_star_returns_renderable_contract(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ai_contract,
+        "retrieve_project_context",
+        lambda request: [_retrieved_document()],
+    )
+    monkeypatch.setattr(
+        ai_contract,
+        "generate_career_star",
+        lambda job_role, question, documents: {
+            "star": {
+                "situation": "검색 요청이 반복되는 상황이었습니다.",
+                "task": "반복 조회 비용을 줄여야 했습니다.",
+                "action": "Redis 캐시와 30분 TTL을 적용했습니다.",
+                "result": "반복 조회를 캐시에서 처리하도록 개선했습니다.",
+            },
+            "finalAnswer": "Redis 캐시와 30분 TTL을 적용했습니다.",
+            "missingEvidence": ["응답 시간의 전후 측정 수치는 확인되지 않습니다."],
+        },
+    )
+
+    response = TestClient(app).post(
+        "/career/star",
+        json={
+            "projectId": 7,
+            "jobRole": "백엔드 / AI 엔지니어",
+            "question": "기술적 어려움을 해결한 경험을 설명해 주세요.",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["jobRole"] == "백엔드 / AI 엔지니어"
+    assert body["star"]["action"] == "Redis 캐시와 30분 TTL을 적용했습니다."
+    assert body["missingEvidence"] == ["응답 시간의 전후 측정 수치는 확인되지 않습니다."]
+    assert body["citations"] == [
+        {
+            "artifactId": 21,
+            "title": "CacheService.java",
+            "url": "https://example.com/cache",
+            "snippet": "Redis 캐시를 도입했고 기본 TTL을 30분으로 설정했다.",
+        }
+    ]
+
+
+def test_career_interview_questions_returns_cards_with_citations(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ai_contract,
+        "retrieve_project_context",
+        lambda request: [_retrieved_document()],
+    )
+    monkeypatch.setattr(
+        ai_contract,
+        "generate_career_interview_questions",
+        lambda job_role, question_count, documents: [
+            {
+                "category": "성능",
+                "likelihood": "HIGH",
+                "question": "Redis 캐시의 TTL을 30분으로 정한 이유는 무엇인가요?",
+                "modelAnswer": "반복 조회를 줄이기 위해 Redis 캐시를 적용했습니다.",
+                "checkpoints": ["캐시 도입 목적", "TTL 정책 이해"],
+                "followUps": [
+                    {
+                        "question": "캐시 무효화는 어떻게 처리했나요?",
+                        "recommendedAnswer": "무효화 방식은 자료에서 확인되지 않아 추가 확인이 필요합니다.",
+                    },
+                    {
+                        "question": "도입 전후 성능 수치는 무엇인가요?",
+                        "recommendedAnswer": "측정 수치는 자료에서 확인되지 않습니다.",
+                    },
+                ],
+            }
+        ],
+    )
+
+    response = TestClient(app).post(
+        "/career/interview-questions",
+        json={
+            "projectId": 7,
+            "jobRole": "백엔드 / AI 엔지니어",
+            "questionCount": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    question = response.json()["questions"][0]
+    assert question["category"] == "성능"
+    assert question["likelihood"] == "HIGH"
+    assert len(question["followUps"]) == 2
+    assert question["citations"][0]["artifactId"] == 21
+
+
+def test_career_question_count_is_limited_to_five() -> None:
+    response = TestClient(app).post(
+        "/career/interview-questions",
+        json={
+            "projectId": 7,
+            "jobRole": "백엔드 개발자",
+            "questionCount": 6,
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_career_generators_do_not_call_gemini_without_documents() -> None:
+    star = services.generate_career_star("백엔드 개발자", "문항", [])
+    questions = services.generate_career_interview_questions("백엔드 개발자", 3, [])
+
+    assert star["missingEvidence"] == ["프로젝트 자료를 먼저 등록해 주세요."]
+    assert questions == []
+
+
+def test_portfolio_context_uses_multiple_queries_and_deduplicates(monkeypatch) -> None:
+    questions = []
+
+    def fake_retrieve(request):
+        questions.append(request.question)
+        return [
+            {
+                "id": "same-document",
+                "text": "shared",
+                "metadata": {"project_id": request.project_id},
+            },
+            {
+                "id": f"document-{len(questions)}",
+                "text": request.question,
+                "metadata": {"project_id": request.project_id},
+            },
+        ]
+
+    monkeypatch.setattr(services, "retrieve_project_context", fake_retrieve)
+
+    documents = services.retrieve_portfolio_context(project_id=7)
+
+    assert len(questions) == 4
+    assert len(documents) == 5
+    assert [document["id"] for document in documents].count("same-document") == 1
+
+
+def test_portfolio_report_returns_screen_sections_and_citations(monkeypatch) -> None:
+    document = _retrieved_document()
+    document["metadata"]["project_name"] = "프로젝트 아카이브"
+    monkeypatch.setattr(
+        ai_contract,
+        "retrieve_portfolio_context",
+        lambda project_id: [document],
+    )
+    monkeypatch.setattr(
+        ai_contract,
+        "generate_portfolio_report",
+        lambda **kwargs: {
+            "oneLineSummary": "개발 산출물을 검색하고 활용하는 아카이빙 플랫폼",
+            "executiveSummary": {
+                "servicePurpose": "개발 산출물 통합 검색",
+                "targetUsers": "개발자",
+                "period": kwargs["period"],
+                "teamSize": kwargs["team_size"],
+                "role": kwargs["role"],
+            },
+            "techStack": [
+                {
+                    "name": "Redis",
+                    "category": "ARCHITECTURE",
+                    "reason": "반복 조회를 캐시하기 위해 사용",
+                }
+            ],
+            "systemArchitecture": "애플리케이션에서 Redis 캐시를 사용합니다.",
+            "dataPipeline": "요청 데이터를 캐시에서 조회합니다.",
+            "contributions": [
+                {
+                    "title": "캐시 정책 적용",
+                    "description": "기본 TTL을 30분으로 설정했습니다.",
+                    "metrics": ["TTL 30분"],
+                }
+            ],
+            "troubleshooting": [
+                {
+                    "title": "TTL 누락 해결",
+                    "tags": ["Redis", "TTL"],
+                    "situation": "TTL 설정이 누락되었습니다.",
+                    "action": "기본 TTL을 적용했습니다.",
+                    "result": "모든 캐시에 만료 정책을 적용했습니다.",
+                }
+            ],
+            "retrospective": {
+                "technicalGrowth": "캐시 만료 정책의 중요성을 학습했습니다.",
+                "collaboration": "자료에서 확인되지 않음",
+                "futureRoadmap": "제안: 캐시 적중률을 측정합니다.",
+            },
+            "missingEvidence": ["협업 과정은 자료에서 확인되지 않습니다."],
+        },
+    )
+
+    response = TestClient(app).post(
+        "/portfolio/report",
+        json={
+            "projectId": 7,
+            "projectName": "AI 기반 프로젝트 검색 및 아카이빙 플랫폼",
+            "period": "2025.09 ~ 2025.12",
+            "teamSize": "5명",
+            "role": "백엔드 리드 및 AI 파이프라인",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["projectName"] == "AI 기반 프로젝트 검색 및 아카이빙 플랫폼"
+    assert body["executiveSummary"]["teamSize"] == "5명"
+    assert body["techStack"][0]["category"] == "ARCHITECTURE"
+    assert body["contributions"][0]["metrics"] == ["TTL 30분"]
+    assert body["troubleshooting"][0]["action"] == "기본 TTL을 적용했습니다."
+    assert body["retrospective"]["futureRoadmap"].startswith("제안:")
+    assert body["citations"][0]["artifactId"] == 21
+    assert body["generatedAt"].endswith("Z")
+
+
+def test_portfolio_report_without_documents_exposes_missing_evidence() -> None:
+    report = services.generate_portfolio_report(
+        project_name="프로젝트",
+        period=None,
+        team_size=None,
+        role=None,
+        retrieved_documents=[],
+    )
+
+    assert report["techStack"] == []
+    assert report["troubleshooting"] == []
+    assert report["executiveSummary"]["period"] == "자료에서 확인되지 않음"
+    assert report["missingEvidence"] == ["프로젝트 자료를 먼저 등록해 주세요."]
