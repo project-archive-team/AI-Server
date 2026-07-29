@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 import numpy as np
-from typing import Any, Optional
-from pydantic import BaseModel
+from typing import Any, Literal, Optional
+from pydantic import BaseModel, Field
 from google.genai import types
 
 # 프로젝트 내의 다른 모듈 불러오기
@@ -17,6 +19,91 @@ from schemas import DocumentRequest, ChatRequest
 # 구조화된 출력을 위한 스키마 정의
 class InitialQuestionsSchema(BaseModel):
     recommended_questions: list[str]
+
+
+class CareerStarSectionsSchema(BaseModel):
+    situation: str = Field(min_length=1)
+    task: str = Field(min_length=1)
+    action: str = Field(min_length=1)
+    result: str = Field(min_length=1)
+
+
+class CareerStarGenerationSchema(BaseModel):
+    star: CareerStarSectionsSchema
+    finalAnswer: str = Field(min_length=1)
+    missingEvidence: list[str]
+
+
+class CareerFollowUpSchema(BaseModel):
+    question: str = Field(min_length=1)
+    recommendedAnswer: str = Field(min_length=1)
+
+
+class CareerInterviewQuestionSchema(BaseModel):
+    category: str = Field(min_length=1)
+    likelihood: Literal["HIGH", "MEDIUM", "LOW"]
+    question: str = Field(min_length=1)
+    modelAnswer: str = Field(min_length=1)
+    checkpoints: list[str] = Field(min_length=2, max_length=4)
+    followUps: list[CareerFollowUpSchema] = Field(min_length=2, max_length=2)
+
+
+class CareerInterviewQuestionsGenerationSchema(BaseModel):
+    questions: list[CareerInterviewQuestionSchema] = Field(min_length=1, max_length=5)
+
+
+class PortfolioExecutiveSummarySchema(BaseModel):
+    servicePurpose: str = Field(min_length=1)
+    targetUsers: str = Field(min_length=1)
+    period: str = Field(min_length=1)
+    teamSize: str = Field(min_length=1)
+    role: str = Field(min_length=1)
+
+
+class PortfolioTechStackSchema(BaseModel):
+    name: str = Field(min_length=1)
+    category: Literal[
+        "FRONTEND",
+        "BACKEND",
+        "DATABASE",
+        "AI_ML",
+        "ARCHITECTURE",
+        "DEVOPS",
+        "OTHER",
+    ]
+    reason: str = Field(min_length=1)
+
+
+class PortfolioContributionSchema(BaseModel):
+    title: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    metrics: list[str] = Field(max_length=3)
+
+
+class PortfolioTroubleshootingSchema(BaseModel):
+    title: str = Field(min_length=1)
+    tags: list[str] = Field(max_length=6)
+    situation: str = Field(min_length=1)
+    action: str = Field(min_length=1)
+    result: str = Field(min_length=1)
+
+
+class PortfolioRetrospectiveSchema(BaseModel):
+    technicalGrowth: str = Field(min_length=1)
+    collaboration: str = Field(min_length=1)
+    futureRoadmap: str = Field(min_length=1)
+
+
+class PortfolioReportGenerationSchema(BaseModel):
+    oneLineSummary: str = Field(min_length=1)
+    executiveSummary: PortfolioExecutiveSummarySchema
+    techStack: list[PortfolioTechStackSchema] = Field(max_length=12)
+    systemArchitecture: str = Field(min_length=1)
+    dataPipeline: str = Field(min_length=1)
+    contributions: list[PortfolioContributionSchema] = Field(max_length=6)
+    troubleshooting: list[PortfolioTroubleshootingSchema] = Field(max_length=5)
+    retrospective: PortfolioRetrospectiveSchema
+    missingEvidence: list[str]
 
 
 # ------------------------------------------------------------
@@ -89,11 +176,15 @@ def cosine_similarity(vector_a: list[float], vector_b: list[float]) -> float:
 # 3-2. 로컬 JSON 기반 Vector Store
 # ------------------------------------------------------------
 
+_STORE_LOCK = threading.RLock()
+
+
 class SimpleVectorStore:
-    def __init__(self, path=STORE_PATH):
-        self.path = path
+    def __init__(self, path: Optional[Path] = None):
+        self.path = path or STORE_PATH
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.documents = self._load()
+        with _STORE_LOCK:
+            self.documents = self._load()
 
     def _load(self) -> list[dict[str, Any]]:
         if not self.path.exists():
@@ -109,38 +200,111 @@ class SimpleVectorStore:
         return data
 
     def _save(self) -> None:
-        with self.path.open("w", encoding="utf-8") as file:
+        temporary_path = self.path.with_suffix(self.path.suffix + ".tmp")
+        with temporary_path.open("w", encoding="utf-8") as file:
             json.dump(self.documents, file, ensure_ascii=False, indent=2)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary_path, self.path)
 
     def add_documents(self, documents: list[dict[str, Any]]) -> None:
         if not documents:
             return
-        self.documents.extend(documents)
-        self._save()
+        with _STORE_LOCK:
+            self.documents = self._load()
+            self.documents.extend(documents)
+            self._save()
+
+    def replace_artifacts(
+        self,
+        project_id: int,
+        artifact_ids: set[int],
+        documents: list[dict[str, Any]],
+    ) -> None:
+        """Replace every indexed chunk for the supplied artifacts atomically."""
+        with _STORE_LOCK:
+            self.documents = [
+                document
+                for document in self._load()
+                if not (
+                    document.get("metadata", {}).get("project_id") == project_id
+                    and document.get("metadata", {}).get("artifact_id") in artifact_ids
+                )
+            ]
+            self.documents.extend(documents)
+            self._save()
 
     def delete_source(self, user_id: int, project_id: int, source_name: str) -> int:
-        before_count = len(self.documents)
-        self.documents = [
-            doc for doc in self.documents
-            if not (
-                doc.get("metadata", {}).get("user_id") == user_id
-                and doc.get("metadata", {}).get("project_id") == project_id
-                and doc.get("metadata", {}).get("source_name") == source_name
-            )
-        ]
-        deleted_count = before_count - len(self.documents)
-        if deleted_count > 0:
-            self._save()
-        return deleted_count
+        with _STORE_LOCK:
+            current = self._load()
+            self.documents = [
+                doc for doc in current
+                if not (
+                    doc.get("metadata", {}).get("user_id") == user_id
+                    and doc.get("metadata", {}).get("project_id") == project_id
+                    and doc.get("metadata", {}).get("source_name") == source_name
+                )
+            ]
+            deleted_count = len(current) - len(self.documents)
+            if deleted_count:
+                self._save()
+            return deleted_count
 
-    def search(self, query_embedding: list[float], user_id: int, project_id: Optional[int] = None, top_k: int = 5) -> list[dict[str, Any]]:
+    def delete_artifacts(self, project_id: int, artifact_ids: set[int]) -> int:
+        with _STORE_LOCK:
+            current = self._load()
+            self.documents = [
+                document
+                for document in current
+                if not (
+                    document.get("metadata", {}).get("project_id") == project_id
+                    and document.get("metadata", {}).get("artifact_id") in artifact_ids
+                )
+            ]
+            deleted_count = len(current) - len(self.documents)
+            if deleted_count:
+                self._save()
+            return deleted_count
+
+    def delete_project(self, project_id: int) -> int:
+        with _STORE_LOCK:
+            current = self._load()
+            self.documents = [
+                document
+                for document in current
+                if document.get("metadata", {}).get("project_id") != project_id
+            ]
+            deleted_count = len(current) - len(self.documents)
+            if deleted_count:
+                self._save()
+            return deleted_count
+
+    def search(
+        self,
+        query_embedding: list[float],
+        user_id: int,
+        project_id: Optional[int] = None,
+        top_k: int = 5,
+        occurred_since: Optional[datetime] = None,
+    ) -> list[dict[str, Any]]:
+        with _STORE_LOCK:
+            documents = self._load()
         scored_documents: list[dict[str, Any]] = []
-        for document in self.documents:
+        for document in documents:
             metadata = document.get("metadata", {})
             if metadata.get("user_id") != user_id:
                 continue
             if project_id is not None and metadata.get("project_id") != project_id:
                 continue
+            if occurred_since is not None:
+                occurred_at = metadata.get("occurred_at")
+                if not occurred_at:
+                    continue
+                try:
+                    if datetime.fromisoformat(occurred_at) < occurred_since:
+                        continue
+                except (TypeError, ValueError):
+                    continue
 
             embedding = document.get("embedding")
             if not embedding:
@@ -304,7 +468,10 @@ def ingest_project_document(request: DocumentRequest) -> int:
     return len(documents)
 
 
-def retrieve_project_context(request: ChatRequest) -> list[dict[str, Any]]:
+def retrieve_project_context(
+    request: ChatRequest,
+    occurred_since: Optional[datetime] = None,
+) -> list[dict[str, Any]]:
     query_embedding = create_embedding(request.question)
     vector_store = SimpleVectorStore()
     return vector_store.search(
@@ -312,7 +479,48 @@ def retrieve_project_context(request: ChatRequest) -> list[dict[str, Any]]:
         user_id=request.user_id,
         project_id=request.project_id,
         top_k=request.top_k,
+        occurred_since=occurred_since,
     )
+
+
+def retrieve_portfolio_context(
+    project_id: int,
+    user_id: int = 0,
+    max_documents: int = 20,
+) -> list[dict[str, Any]]:
+    """포트폴리오 각 섹션에 필요한 근거를 다중 관점으로 검색하고 중복을 제거한다."""
+    queries = [
+        "프로젝트 목적 대상 사용자 기간 팀 구성 담당 역할 핵심 기능",
+        "기술 스택 선택 이유 시스템 아키텍처 데이터 처리 흐름",
+        "구현 기능 담당 업무 핵심 기여 성능 개선 정량 성과",
+        "장애 문제 원인 해결 과정 트러블슈팅 결과 회고 협업 개선 계획",
+    ]
+    merged: list[dict[str, Any]] = []
+    seen: set[Any] = set()
+
+    for query in queries:
+        request = ChatRequest(
+            user_id=user_id,
+            project_id=project_id,
+            question=query,
+            answer_mode="portfolio",
+            top_k=8,
+        )
+        for document in retrieve_project_context(request):
+            metadata = document.get("metadata", {})
+            key = document.get("id") or (
+                metadata.get("artifact_id"),
+                metadata.get("chunk_index"),
+                document.get("text", ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(document)
+            if len(merged) >= max_documents:
+                return merged
+
+    return merged
 
 
 def build_context(retrieved_documents: list[dict[str, Any]]) -> str:
@@ -337,8 +545,20 @@ def get_mode_instruction(answer_mode: str) -> str:
 ## 30초 답변 예시
 실제 면접장에서 대화하듯 자연스럽게 말할 수 있는 구어체 문장을 작성합니다.
 
-## 예상 꼬리 질문
-이 답변을 들은 면접관이 추가로 물어볼 만한 날카로운 질문을 3개 작성합니다.
+## 예상 꼬리 질문과 추천 답변
+이 답변을 들은 면접관이 추가로 물어볼 만한 날카로운 질문을 정확히 3개 작성합니다.
+각 질문 바로 아래에 지원자가 말할 수 있는 추천 답변을 함께 작성합니다.
+
+다음 형식을 반드시 지킵니다.
+
+### 1. 예상 질문
+질문 내용을 작성합니다.
+
+**추천 답변**
+프로젝트 자료에 근거한 2~4문장의 구어체 답변을 작성합니다.
+
+추천 답변에도 없는 사실이나 수치를 만들지 않습니다. 답변에 필요한 정보가 자료에
+부족하면 어떤 경험이나 수치를 추가로 준비해야 하는지 솔직하게 안내합니다.
 """.strip()
 
     return "## 핵심 답변\n직접 답변을 작성합니다.\n\n## 프로젝트에서 확인된 내용\n역할, 기술, 해결 과정을 요약합니다.\n\n## 강점\n드러나는 강점을 요약합니다.\n\n## 더 보완하면 좋은 점\n추가 보완점을 알려줍니다."
@@ -375,6 +595,201 @@ def generate_answer(request: ChatRequest, retrieved_documents: list[dict[str, An
         )
     )
     return response.text
+
+
+def generate_career_star(
+    job_role: str,
+    question: str,
+    retrieved_documents: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """프로젝트 근거만 사용해 프론트에서 바로 그릴 수 있는 STAR 답변을 생성한다."""
+    if not retrieved_documents:
+        unavailable = "등록된 프로젝트 자료가 없어 답변을 생성할 수 없습니다."
+        return {
+            "star": {
+                "situation": unavailable,
+                "task": unavailable,
+                "action": unavailable,
+                "result": unavailable,
+            },
+            "finalAnswer": unavailable,
+            "missingEvidence": ["프로젝트 자료를 먼저 등록해 주세요."],
+        }
+
+    context = build_context(retrieved_documents)
+    system_instruction = """
+당신은 개발자의 프로젝트 기록을 취업용 자기소개서 답변으로 정리하는 전문가입니다.
+반드시 제공된 프로젝트 자료에 명시된 사실만 사용합니다.
+
+규칙:
+1. 자료에 없는 기술, 역할, 장애 원인, 성과, 수치, 전후 비교를 절대 만들지 않습니다.
+2. "크게 개선", "대폭 감소"처럼 측정 근거가 필요한 표현은 자료에 수치나 명시적 평가가 있을 때만 사용합니다.
+3. 지원 직무에 맞게 표현을 다듬되 프로젝트 사실 자체를 바꾸지 않습니다.
+4. STAR 각 항목은 서로 중복하지 않고 지원자 관점의 한국어 문장으로 작성합니다.
+5. 질문에 답하는 데 필요한 역할이나 성과 수치가 자료에 없으면 추측하지 말고 missingEvidence에 구체적으로 적습니다.
+6. finalAnswer는 STAR 내용을 자연스럽게 연결한 완성형 답변이며 새로운 사실을 추가하지 않습니다.
+7. 출처나 인용 정보는 출력하지 않습니다. 인용은 서버가 별도로 결합합니다.
+""".strip()
+    prompt = f"""
+[지원 직무]
+{job_role}
+
+[자기소개서 문항]
+{question}
+
+[프로젝트 근거 자료]
+{context}
+
+위 근거만 사용해 Situation, Task, Action, Result와 완성형 답변을 작성하세요.
+""".strip()
+
+    response = client.models.generate_content(
+        model=GEMINI_CHAT_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            response_mime_type="application/json",
+            response_schema=CareerStarGenerationSchema,
+            temperature=0.2,
+        ),
+    )
+    return CareerStarGenerationSchema.model_validate_json(response.text).model_dump()
+
+
+def generate_career_interview_questions(
+    job_role: str,
+    question_count: int,
+    retrieved_documents: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """프로젝트 아키텍처에 근거한 면접 질문 카드 목록을 생성한다."""
+    if not retrieved_documents:
+        return []
+
+    context = build_context(retrieved_documents)
+    system_instruction = f"""
+당신은 개발 프로젝트 기반 실전 기술 면접 질문을 설계하는 면접관입니다.
+반드시 제공된 프로젝트 자료에 명시된 사실만 사용해 정확히 {question_count}개의 질문 카드를 만듭니다.
+
+규칙:
+1. 자료에 없는 기술, 역할, 장애, 성과 수치, 응답 시간, 데이터 규모를 절대 만들지 않습니다.
+2. 질문은 지원 직무와 프로젝트의 실제 아키텍처, 기술 선택, 트러블슈팅에 연결합니다.
+3. likelihood는 HIGH, MEDIUM, LOW 중 하나만 사용합니다.
+4. modelAnswer는 지원자가 실제 면접에서 말할 수 있는 STAR 흐름의 한국어 답변으로 작성합니다.
+5. 근거가 부족한 내용은 아는 척하지 말고 확인할 수 없다고 명시합니다.
+6. checkpoints는 면접관이 평가할 핵심 요소를 2~4개 작성합니다.
+7. followUps는 질문마다 정확히 2개 만들고, 각 질문에 근거 기반 recommendedAnswer를 제공합니다.
+8. 추천 답변에도 원문에 없는 사실이나 수치를 추가하지 않습니다.
+9. 출처나 인용 정보는 출력하지 않습니다. 인용은 서버가 별도로 결합합니다.
+""".strip()
+    prompt = f"""
+[지원 직무]
+{job_role}
+
+[프로젝트 근거 자료]
+{context}
+
+지원 직무와 프로젝트에 특화된 실전 기술 면접 질문 카드를 생성하세요.
+질문 카테고리는 아키텍처, 성능, 장애 대응, 데이터, 협업 중 실제 근거가 있는 영역에서 선택하세요.
+""".strip()
+
+    response = client.models.generate_content(
+        model=GEMINI_CHAT_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            response_mime_type="application/json",
+            response_schema=CareerInterviewQuestionsGenerationSchema,
+            temperature=0.2,
+        ),
+    )
+    result = CareerInterviewQuestionsGenerationSchema.model_validate_json(response.text)
+    return [question.model_dump() for question in result.questions[:question_count]]
+
+
+def generate_portfolio_report(
+    project_name: str,
+    period: Optional[str],
+    team_size: Optional[str],
+    role: Optional[str],
+    retrieved_documents: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """아카이브 자료를 화면용 개발자 포트폴리오 리포트로 구조화한다."""
+    unavailable = "자료에서 확인되지 않음"
+    if not retrieved_documents:
+        return {
+            "oneLineSummary": unavailable,
+            "executiveSummary": {
+                "servicePurpose": unavailable,
+                "targetUsers": unavailable,
+                "period": period or unavailable,
+                "teamSize": team_size or unavailable,
+                "role": role or unavailable,
+            },
+            "techStack": [],
+            "systemArchitecture": unavailable,
+            "dataPipeline": unavailable,
+            "contributions": [],
+            "troubleshooting": [],
+            "retrospective": {
+                "technicalGrowth": unavailable,
+                "collaboration": unavailable,
+                "futureRoadmap": "근거 자료를 보완한 뒤 개선 계획을 작성해 주세요.",
+            },
+            "missingEvidence": ["프로젝트 자료를 먼저 등록해 주세요."],
+        }
+
+    context = build_context(retrieved_documents)
+    supplied_metadata = (
+        f"- 프로젝트명: {project_name}\n"
+        f"- 진행 기간: {period or '미입력'}\n"
+        f"- 팀 규모: {team_size or '미입력'}\n"
+        f"- 담당 역할: {role or '미입력'}"
+    )
+    system_instruction = """
+당신은 수집된 개발 산출물을 근거로 개발자 포트폴리오 리포트를 작성하는 전문가입니다.
+결과는 채용 담당자와 기술 면접관이 빠르게 프로젝트의 가치, 설계 판단, 지원자의 기여와 문제 해결 능력을 파악할 수 있어야 합니다.
+
+절대 규칙:
+1. 제공된 프로젝트 메타데이터와 근거 자료에 명시된 사실만 사용합니다.
+2. 자료에 없는 기술, 역할, 팀 규모, 기간, 장애 원인, 성능 수치, 전후 비교를 만들지 않습니다.
+3. 수치가 없는 성과는 정성적으로만 쓰며 "대폭", "크게", "향상률" 같은 측정 표현을 사용하지 않습니다.
+4. 서로 다른 문서의 사실을 하나의 사건처럼 임의로 합치지 않습니다.
+5. 확인할 수 없는 필드는 "자료에서 확인되지 않음"이라고 쓰고 missingEvidence에도 보완 항목을 기록합니다.
+6. techStack의 reason은 실제 도입 이유가 자료에 있을 때만 적고, 단순 사용 사실만 있으면 "사용 사실만 확인되며 선택 이유는 자료에서 확인되지 않음"이라고 씁니다.
+7. metrics에는 원문에 명시된 정량 수치만 넣습니다. 근거 수치가 없으면 빈 배열을 반환합니다.
+8. troubleshooting은 실제 문제 상황과 해결 행동이 함께 확인되는 사례만 작성합니다. 결과가 불명확하면 그대로 밝힙니다.
+9. retrospective의 technicalGrowth와 collaboration은 기록에서 드러난 학습만 요약합니다.
+10. futureRoadmap은 기존에 결정된 계획과 AI의 제안을 구분하여, 제안이라면 "제안:"으로 시작합니다.
+11. 출처나 인용 정보는 출력하지 않습니다. 인용은 서버가 검색 문서에서 결합합니다.
+""".strip()
+    prompt = f"""
+[백엔드가 제공한 프로젝트 메타데이터]
+{supplied_metadata}
+
+[프로젝트 근거 자료]
+{context}
+
+다음 화면 구성을 위한 한국어 포트폴리오 리포트를 작성하세요.
+- 한 줄 요약
+- 프로젝트 한 줄 요약(서비스 목적, 대상 사용자, 기간, 팀 규모, 담당 역할)
+- 기술 스택 및 아키텍처(기술별 구분과 도입 이유, 시스템 아키텍처, 데이터 처리 흐름)
+- 핵심 역할 및 기여
+- 트러블슈팅 및 문제 해결 과정(Situation, Action, Result)
+- 회고 및 배운 점(기술 성장, 협업 인사이트, 향후 개선점)
+""".strip()
+
+    response = client.models.generate_content(
+        model=GEMINI_CHAT_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            response_mime_type="application/json",
+            response_schema=PortfolioReportGenerationSchema,
+            temperature=0.2,
+        ),
+    )
+    return PortfolioReportGenerationSchema.model_validate_json(response.text).model_dump()
+
 
 def build_sources(retrieved_documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     sources: list[dict[str, Any]] = []

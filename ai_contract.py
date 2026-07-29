@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 from uuid import uuid4
 
@@ -10,9 +10,12 @@ from pydantic import BaseModel, Field
 from schemas import ChatRequest
 from services import (
     SimpleVectorStore,
-    build_sources,
     create_embeddings,
     generate_answer,
+    generate_career_interview_questions,
+    generate_career_star,
+    generate_portfolio_report,
+    retrieve_portfolio_context,
     retrieve_project_context,
 )
 
@@ -46,16 +49,149 @@ class SummaryRequest(BaseModel):
     since: datetime
 
 
-def _citations(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "artifactId": source.get("artifact_id"),
-            "title": source.get("source_name"),
-            "url": source.get("source_url"),
-            "snippet": source.get("snippet", ""),
-        }
-        for source in sources
+class DeleteArtifactsRequest(BaseModel):
+    projectId: int
+    artifactIds: list[int] = Field(min_length=1)
+
+
+class CareerStarRequest(BaseModel):
+    projectId: int
+    jobRole: str = Field(min_length=1)
+    question: str = Field(min_length=1)
+
+
+class CareerInterviewQuestionsRequest(BaseModel):
+    projectId: int
+    jobRole: str = Field(min_length=1)
+    questionCount: int = Field(default=3, ge=1, le=5)
+
+
+class PortfolioReportRequest(BaseModel):
+    projectId: int
+    projectName: Optional[str] = Field(default=None, min_length=1)
+    period: Optional[str] = Field(default=None, min_length=1)
+    teamSize: Optional[str] = Field(default=None, min_length=1)
+    role: Optional[str] = Field(default=None, min_length=1)
+
+
+class Citation(BaseModel):
+    artifactId: int
+    title: Optional[str] = None
+    url: Optional[str] = None
+    snippet: str
+
+
+class CareerStarSections(BaseModel):
+    situation: str
+    task: str
+    action: str
+    result: str
+
+
+class CareerStarResponse(BaseModel):
+    jobRole: str
+    question: str
+    star: CareerStarSections
+    finalAnswer: str
+    missingEvidence: list[str]
+    citations: list[Citation]
+
+
+class CareerFollowUp(BaseModel):
+    question: str = Field(min_length=1)
+    recommendedAnswer: str = Field(min_length=1)
+
+
+class CareerInterviewQuestion(BaseModel):
+    category: str = Field(min_length=1)
+    likelihood: Literal["HIGH", "MEDIUM", "LOW"]
+    question: str = Field(min_length=1)
+    modelAnswer: str = Field(min_length=1)
+    checkpoints: list[str] = Field(min_length=2, max_length=4)
+    followUps: list[CareerFollowUp] = Field(min_length=2, max_length=2)
+    citations: list[Citation]
+
+
+class CareerInterviewQuestionsResponse(BaseModel):
+    questions: list[CareerInterviewQuestion]
+
+
+class PortfolioExecutiveSummary(BaseModel):
+    servicePurpose: str
+    targetUsers: str
+    period: str
+    teamSize: str
+    role: str
+
+
+class PortfolioTechStack(BaseModel):
+    name: str
+    category: Literal[
+        "FRONTEND",
+        "BACKEND",
+        "DATABASE",
+        "AI_ML",
+        "ARCHITECTURE",
+        "DEVOPS",
+        "OTHER",
     ]
+    reason: str
+
+
+class PortfolioContribution(BaseModel):
+    title: str
+    description: str
+    metrics: list[str]
+
+
+class PortfolioTroubleshooting(BaseModel):
+    title: str
+    tags: list[str]
+    situation: str
+    action: str
+    result: str
+
+
+class PortfolioRetrospective(BaseModel):
+    technicalGrowth: str
+    collaboration: str
+    futureRoadmap: str
+
+
+class PortfolioReportResponse(BaseModel):
+    projectId: int
+    projectName: str
+    generatedAt: datetime
+    oneLineSummary: str
+    executiveSummary: PortfolioExecutiveSummary
+    techStack: list[PortfolioTechStack]
+    systemArchitecture: str
+    dataPipeline: str
+    contributions: list[PortfolioContribution]
+    troubleshooting: list[PortfolioTroubleshooting]
+    retrospective: PortfolioRetrospective
+    missingEvidence: list[str]
+    citations: list[Citation]
+
+
+def _citations(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    citations: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for document in documents:
+        metadata = document.get("metadata", {})
+        artifact_id = metadata.get("artifact_id")
+        if artifact_id is None or artifact_id in seen:
+            continue
+        seen.add(artifact_id)
+        citations.append(
+            {
+                "artifactId": artifact_id,
+                "title": metadata.get("source_name"),
+                "url": metadata.get("source_url"),
+                "snippet": document.get("text", "")[:240],
+            }
+        )
+    return citations
 
 
 @router.post("/index")
@@ -100,18 +236,30 @@ def index_documents(request: IndexRequest) -> dict[str, Any]:
 
     store = SimpleVectorStore()
     artifact_ids = {chunk.artifactId for chunk in request.chunks}
-    store.documents = [
-        doc for doc in store.documents
-        if not (
-            doc.get("metadata", {}).get("project_id") == request.projectId
-            and doc.get("metadata", {}).get("artifact_id") in artifact_ids
-        )
-    ]
-    store.add_documents(documents)
+    store.replace_artifacts(request.projectId, artifact_ids, documents)
     return {"indexed": len(documents), "techStack": sorted(detected)}
 
 
-def _answer(project_id: int, question: str, mode: str = "general") -> dict[str, Any]:
+@router.post("/index/delete")
+def delete_artifacts(request: DeleteArtifactsRequest) -> dict[str, int]:
+    deleted = SimpleVectorStore().delete_artifacts(
+        request.projectId,
+        set(request.artifactIds),
+    )
+    return {"deleted": deleted}
+
+
+@router.delete("/index/projects/{project_id}")
+def delete_project_index(project_id: int) -> dict[str, int]:
+    return {"deleted": SimpleVectorStore().delete_project(project_id)}
+
+
+def _answer(
+    project_id: int,
+    question: str,
+    mode: str = "general",
+    occurred_since: Optional[datetime] = None,
+) -> dict[str, Any]:
     chat_request = ChatRequest(
         user_id=0,
         project_id=project_id,
@@ -119,13 +267,9 @@ def _answer(project_id: int, question: str, mode: str = "general") -> dict[str, 
         answer_mode=mode,
         top_k=8,
     )
-    docs = retrieve_project_context(chat_request)
+    docs = retrieve_project_context(chat_request, occurred_since=occurred_since)
     answer = generate_answer(chat_request, docs)
-    sources = build_sources(docs)
-    for source, doc in zip(sources, docs):
-        source["artifact_id"] = doc.get("metadata", {}).get("artifact_id")
-        source["snippet"] = doc.get("text", "")[:240]
-    return {"answer": answer, "citations": _citations(sources)}
+    return {"answer": answer, "citations": _citations(docs)}
 
 
 @router.post("/chat")
@@ -138,6 +282,7 @@ def summary(request: SummaryRequest) -> dict[str, str]:
     result = _answer(
         request.projectId,
         f"{request.since.isoformat()} 이후의 커밋과 회의록, 주요 진행 상황을 요약해줘.",
+        occurred_since=request.since,
     )
     return {"summary": result["answer"]}
 
@@ -145,3 +290,86 @@ def summary(request: SummaryRequest) -> dict[str, str]:
 @router.post("/interview")
 def interview(request: QuestionRequest) -> dict[str, Any]:
     return _answer(request.projectId, request.question, mode="interview")
+
+
+@router.post("/career/star", response_model=CareerStarResponse)
+def career_star(request: CareerStarRequest) -> dict[str, Any]:
+    chat_request = ChatRequest(
+        user_id=0,
+        project_id=request.projectId,
+        question=f"{request.jobRole} 지원 자기소개서 문항: {request.question}",
+        answer_mode="portfolio",
+        top_k=8,
+    )
+    documents = retrieve_project_context(chat_request)
+    generated = generate_career_star(request.jobRole, request.question, documents)
+    return {
+        "jobRole": request.jobRole,
+        "question": request.question,
+        **generated,
+        "citations": _citations(documents),
+    }
+
+
+@router.post(
+    "/career/interview-questions",
+    response_model=CareerInterviewQuestionsResponse,
+)
+def career_interview_questions(
+    request: CareerInterviewQuestionsRequest,
+) -> dict[str, Any]:
+    chat_request = ChatRequest(
+        user_id=0,
+        project_id=request.projectId,
+        question=(
+            f"{request.jobRole} 직무 기술 면접: 프로젝트 아키텍처, "
+            "기술 선택, 성능 개선, 장애 대응"
+        ),
+        answer_mode="interview",
+        top_k=8,
+    )
+    documents = retrieve_project_context(chat_request)
+    citations = _citations(documents)
+    questions = generate_career_interview_questions(
+        request.jobRole,
+        request.questionCount,
+        documents,
+    )
+    return {
+        "questions": [
+            {**question, "citations": citations}
+            for question in questions
+        ]
+    }
+
+
+@router.post("/portfolio/report", response_model=PortfolioReportResponse)
+def portfolio_report(request: PortfolioReportRequest) -> dict[str, Any]:
+    documents = retrieve_portfolio_context(request.projectId)
+    indexed_project_name = next(
+        (
+            document.get("metadata", {}).get("project_name")
+            for document in documents
+            if document.get("metadata", {}).get("project_name")
+        ),
+        None,
+    )
+    project_name = (
+        request.projectName
+        or indexed_project_name
+        or f"Project {request.projectId}"
+    )
+    report = generate_portfolio_report(
+        project_name=project_name,
+        period=request.period,
+        team_size=request.teamSize,
+        role=request.role,
+        retrieved_documents=documents,
+    )
+    return {
+        "projectId": request.projectId,
+        "projectName": project_name,
+        "generatedAt": datetime.now(timezone.utc),
+        **report,
+        "citations": _citations(documents),
+    }
