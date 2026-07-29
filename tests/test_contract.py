@@ -154,3 +154,13 @@ def test_citations_are_deduplicated_by_artifact_without_losing_metadata() -> Non
             "snippet": "another artifact",
         },
     ]
+
+
+def test_interview_prompt_requests_answers_for_each_follow_up_question() -> None:
+    instruction = services.get_mode_instruction("interview")
+
+    assert "예상 꼬리 질문과 추천 답변" in instruction
+    assert "정확히 3개" in instruction
+    assert "각 질문 바로 아래" in instruction
+    assert "**추천 답변**" in instruction
+    assert "없는 사실이나 수치를 만들지 않습니다" in instruction
