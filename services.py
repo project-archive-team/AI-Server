@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -10,6 +11,7 @@ import numpy as np
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 from google.genai import types
+from google.genai.errors import ClientError
 
 # 프로젝트 내의 다른 모듈 불러오기
 from config import client, GEMINI_EMBEDDING_MODEL, GEMINI_CHAT_MODEL, STORE_PATH
@@ -17,6 +19,9 @@ from schemas import DocumentRequest, ChatRequest
 
 # Gemini batchEmbedContents의 요청당 상한.
 EMBEDDING_BATCH_SIZE = 100
+
+# 429는 분당 쿼터라 한 번 쉬면 대개 풀린다. 큰 저장소를 감안해 넉넉히 잡는다.
+EMBEDDING_MAX_RETRIES = 6
 
 
 # 구조화된 출력을 위한 스키마 정의
@@ -159,12 +164,39 @@ def create_embeddings(texts: list[str]) -> list[list[float]]:
     embeddings: list[list[float]] = []
     for start in range(0, len(normalized_texts), EMBEDDING_BATCH_SIZE):
         batch = normalized_texts[start : start + EMBEDDING_BATCH_SIZE]
-        response = client.models.embed_content(
-            model=GEMINI_EMBEDDING_MODEL,
-            contents=batch,
-        )
+        response = _embed_with_retry(batch)
         embeddings.extend(emb.values for emb in response.embeddings)
     return embeddings
+
+
+def _embed_with_retry(batch: list[str]):
+    """무료 등급은 분당 100건이라 배치 몇 개만 보내도 429가 난다.
+
+    서버가 알려주는 대기 시간만큼 쉬었다 다시 보낸다. 여기서 포기하면 색인이
+    통째로 실패하고 사용자는 "자료를 찾지 못했다"만 보게 된다.
+    """
+    for attempt in range(EMBEDDING_MAX_RETRIES):
+        try:
+            return client.models.embed_content(
+                model=GEMINI_EMBEDDING_MODEL,
+                contents=batch,
+            )
+        except ClientError as error:
+            if getattr(error, "code", None) != 429 or attempt == EMBEDDING_MAX_RETRIES - 1:
+                raise
+            time.sleep(_retry_delay_seconds(error))
+    raise RuntimeError("unreachable")
+
+
+def _retry_delay_seconds(error: ClientError) -> float:
+    """429 응답의 RetryInfo를 그대로 따른다. 못 읽으면 쿼터 창이 도는 60초를 쉰다."""
+    try:
+        for detail in error.details["error"]["details"]:
+            if detail.get("@type", "").endswith("RetryInfo"):
+                return float(detail["retryDelay"].rstrip("s")) + 1
+    except Exception:
+        pass
+    return 60.0
 
 
 def cosine_similarity(vector_a: list[float], vector_b: list[float]) -> float:
