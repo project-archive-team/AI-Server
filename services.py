@@ -15,6 +15,9 @@ from google.genai import types
 from config import client, GEMINI_EMBEDDING_MODEL, GEMINI_CHAT_MODEL, STORE_PATH
 from schemas import DocumentRequest, ChatRequest
 
+# Gemini batchEmbedContents의 요청당 상한.
+EMBEDDING_BATCH_SIZE = 100
+
 
 # 구조화된 출력을 위한 스키마 정의
 class InitialQuestionsSchema(BaseModel):
@@ -151,11 +154,17 @@ def create_embeddings(texts: list[str]) -> list[list[float]]:
     if not normalized_texts:
         return []
 
-    response = client.models.embed_content(
-        model=GEMINI_EMBEDDING_MODEL,
-        contents=normalized_texts,
-    )
-    return [emb.values for emb in response.embeddings]
+    # Gemini는 한 번에 100개까지만 받는다. 저장소 하나만 수집해도 청크가 그보다 많아서
+    # 통째로 보내면 400 INVALID_ARGUMENT로 색인 전체가 실패한다.
+    embeddings: list[list[float]] = []
+    for start in range(0, len(normalized_texts), EMBEDDING_BATCH_SIZE):
+        batch = normalized_texts[start : start + EMBEDDING_BATCH_SIZE]
+        response = client.models.embed_content(
+            model=GEMINI_EMBEDDING_MODEL,
+            contents=batch,
+        )
+        embeddings.extend(emb.values for emb in response.embeddings)
+    return embeddings
 
 
 def cosine_similarity(vector_a: list[float], vector_b: list[float]) -> float:
