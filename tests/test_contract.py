@@ -1,11 +1,30 @@
 from datetime import datetime, timezone
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 import ai_contract
 import services
 from ai_app import app
 from services import SimpleVectorStore
+
+
+def test_portfolio_contribution_requires_a_visible_achievement() -> None:
+    with pytest.raises(ValidationError):
+        services.PortfolioContributionSchema(
+            title="통합 인증 및 권한 관리 시스템 구축",
+            description="JWT와 OAuth2 기반 인증을 구현했습니다.",
+            metrics=[],
+        )
+
+    contribution = services.PortfolioContributionSchema(
+        title="통합 인증 및 권한 관리 시스템 구축",
+        description="JWT와 OAuth2 기반 인증을 구현했습니다.",
+        metrics=["여러 인증 제공자를 하나의 로그인 흐름으로 통합"],
+    )
+
+    assert contribution.metrics == ["여러 인증 제공자를 하나의 로그인 흐름으로 통합"]
 
 
 def _chunk(artifact_id: int, text: str, seq: int = 0) -> dict:
