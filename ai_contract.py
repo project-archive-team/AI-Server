@@ -141,7 +141,7 @@ class PortfolioTechStack(BaseModel):
 class PortfolioContribution(BaseModel):
     title: str
     description: str
-    metrics: list[str]
+    metrics: list[str] = Field(min_length=1, max_length=3)
 
 
 class PortfolioTroubleshooting(BaseModel):

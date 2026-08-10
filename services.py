@@ -85,7 +85,7 @@ class PortfolioTechStackSchema(BaseModel):
 class PortfolioContributionSchema(BaseModel):
     title: str = Field(min_length=1)
     description: str = Field(min_length=1)
-    metrics: list[str] = Field(max_length=3)
+    metrics: list[str] = Field(min_length=1, max_length=3)
 
 
 class PortfolioTroubleshootingSchema(BaseModel):
@@ -797,7 +797,7 @@ def generate_portfolio_report(
 4. 서로 다른 문서의 사실을 하나의 사건처럼 임의로 합치지 않습니다.
 5. 확인할 수 없는 필드는 "자료에서 확인되지 않음"이라고 쓰고 missingEvidence에도 보완 항목을 기록합니다.
 6. techStack의 reason은 실제 도입 이유가 자료에 있을 때만 적고, 단순 사용 사실만 있으면 "사용 사실만 확인되며 선택 이유는 자료에서 확인되지 않음"이라고 씁니다.
-7. metrics에는 원문에 명시된 정량 수치만 넣습니다. 근거 수치가 없으면 빈 배열을 반환합니다.
+7. metrics는 화면의 "성과" 영역에 표시됩니다. 원문에 정량 수치가 있으면 해당 수치를 우선 넣고, 수치가 없으면 description을 반복하지 말고 원문에서 확인되는 정성적 결과(예: 자동화된 흐름, 확보된 안정성, 가능해진 기능)를 짧게 요약해 최소 1개를 넣습니다. 자료에 없는 개선 효과나 수치는 만들지 않습니다.
 8. troubleshooting은 실제 문제 상황과 해결 행동이 함께 확인되는 사례만 작성합니다. 결과가 불명확하면 그대로 밝힙니다.
 9. retrospective의 technicalGrowth와 collaboration은 기록에서 드러난 학습만 요약합니다.
 10. futureRoadmap은 기존에 결정된 계획과 AI의 제안을 구분하여, 제안이라면 "제안:"으로 시작합니다.
