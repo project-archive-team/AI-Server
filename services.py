@@ -114,6 +114,13 @@ class PortfolioReportGenerationSchema(BaseModel):
     missingEvidence: list[str]
 
 
+INTERVIEW_SPOKEN_ANSWER_RULE = (
+    "면접에서 말하기 자연스러운 수준으로 설명하고, API 경로·클래스명·메서드명·변수명 같은 "
+    "구현 식별자는 질문에서 직접 요구하거나 설계 선택을 설명하는 데 꼭 필요한 경우에만 표기합니다. "
+    "그 외에는 '개별 자료 삭제 API', '프로젝트 단위 삭제 API'처럼 역할 중심의 자연어로 표현합니다."
+)
+
+
 # ------------------------------------------------------------
 # 3-1. 문서 Chunking & 임베딩 & 유사도 계산
 # ------------------------------------------------------------
@@ -579,7 +586,7 @@ def get_mode_instruction(answer_mode: str) -> str:
         return "## 프로젝트 분석\n질문에 대한 핵심 내용을 설명합니다.\n\n## 포트폴리오용 문장\n전문적인 문장 2~4개를 작성합니다.\n\n## 강조하면 좋은 역량\n기술, 문제 해결 역량을 정리합니다.\n\n## 보완하면 좋은 정보\n부족한 수치나 역할을 알려줍니다."
     
     if answer_mode == "interview":
-        return """
+        return f"""
 ## 핵심 답변
 면접에서 말할 수 있는 형태로 질문에 대해 명확히 답변합니다.
 
@@ -600,6 +607,8 @@ def get_mode_instruction(answer_mode: str) -> str:
 
 추천 답변에도 없는 사실이나 수치를 만들지 않습니다. 답변에 필요한 정보가 자료에
 부족하면 어떤 경험이나 수치를 추가로 준비해야 하는지 솔직하게 안내합니다.
+
+{INTERVIEW_SPOKEN_ANSWER_RULE}
 """.strip()
 
     return "## 핵심 답변\n직접 답변을 작성합니다.\n\n## 프로젝트에서 확인된 내용\n역할, 기술, 해결 과정을 요약합니다.\n\n## 강점\n드러나는 강점을 요약합니다.\n\n## 더 보완하면 좋은 점\n추가 보완점을 알려줍니다."
@@ -658,7 +667,7 @@ def generate_career_star(
         }
 
     context = build_context(retrieved_documents)
-    system_instruction = """
+    system_instruction = f"""
 당신은 개발자의 프로젝트 기록을 취업용 자기소개서 답변으로 정리하는 전문가입니다.
 반드시 제공된 프로젝트 자료에 명시된 사실만 사용합니다.
 
@@ -670,6 +679,7 @@ def generate_career_star(
 5. 질문에 답하는 데 필요한 역할이나 성과 수치가 자료에 없으면 추측하지 말고 missingEvidence에 구체적으로 적습니다.
 6. finalAnswer는 STAR 내용을 자연스럽게 연결한 완성형 답변이며 새로운 사실을 추가하지 않습니다.
 7. 출처나 인용 정보는 출력하지 않습니다. 인용은 서버가 별도로 결합합니다.
+8. {INTERVIEW_SPOKEN_ANSWER_RULE}
 """.strip()
     prompt = f"""
 [지원 직무]
@@ -721,6 +731,7 @@ def generate_career_interview_questions(
 7. followUps는 질문마다 정확히 2개 만들고, 각 질문에 근거 기반 recommendedAnswer를 제공합니다.
 8. 추천 답변에도 원문에 없는 사실이나 수치를 추가하지 않습니다.
 9. 출처나 인용 정보는 출력하지 않습니다. 인용은 서버가 별도로 결합합니다.
+10. {INTERVIEW_SPOKEN_ANSWER_RULE}
 """.strip()
     prompt = f"""
 [지원 직무]

@@ -183,6 +183,9 @@ def test_interview_prompt_requests_answers_for_each_follow_up_question() -> None
     assert "각 질문 바로 아래" in instruction
     assert "**추천 답변**" in instruction
     assert "없는 사실이나 수치를 만들지 않습니다" in instruction
+    assert "질문에서 직접 요구하거나" in instruction
+    assert "개별 자료 삭제 API" in instruction
+    assert "프로젝트 단위 삭제 API" in instruction
 
 
 def _retrieved_document() -> dict:
