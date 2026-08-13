@@ -188,6 +188,16 @@ def test_interview_prompt_requests_answers_for_each_follow_up_question() -> None
     assert "프로젝트 단위 삭제 API" in instruction
 
 
+def test_career_role_alignment_rule_prioritizes_verified_personal_contribution() -> None:
+    rule = services.CAREER_ROLE_ALIGNMENT_RULE
+
+    assert "지원 직무" in rule
+    assert "AI, 백엔드, 프론트엔드" in rule
+    assert "본인이 맡은 책임, 판단, 행동, 기술적 기여" in rule
+    assert "전이 가능한 역량" in rule
+    assert "수행하지 않은 역할이나 기여" in rule
+
+
 def _retrieved_document() -> dict:
     return {
         "text": "Redis 캐시를 도입했고 기본 TTL을 30분으로 설정했다.",
