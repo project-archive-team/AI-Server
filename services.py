@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -100,7 +101,7 @@ class PortfolioReportGenerationSchema(BaseModel):
     techStack: list[PortfolioTechStackSchema] = Field(max_length=12)
     systemArchitecture: str = Field(min_length=1)
     dataPipeline: str = Field(min_length=1)
-    contributions: list[PortfolioContributionSchema] = Field(max_length=6)
+    contributions: list[PortfolioContributionSchema] = Field(max_length=5)
     troubleshooting: list[PortfolioTroubleshootingSchema] = Field(max_length=5)
     retrospective: PortfolioRetrospectiveSchema
     missingEvidence: list[str]
@@ -119,6 +120,25 @@ CAREER_ROLE_ALIGNMENT_RULE = (
     "설명합니다. 지원 직무와 담당 역할이 다르더라도 자료에서 확인되는 전이 가능한 역량만 연결하며, "
     "수행하지 않은 역할이나 기여를 지원자의 경험처럼 표현하지 않습니다."
 )
+
+PORTFOLIO_CONTRIBUTION_SELECTION_RULE = """
+핵심 역할 및 기여 선정 규칙:
+1. 지원자가 직접 책임지고 수행한 사실이 프로젝트 자료에서 확인되는 항목만 선정합니다.
+2. 선정 항목은 다음 조건을 모두 만족해야 합니다.
+   - 지원 직무 또는 프로젝트에서 맡은 역할과 관련된 역량을 보여줍니다.
+   - 핵심 기능, 아키텍처, 데이터 흐름, 품질, 성능, 안정성, 보안 또는 운영에 실질적인 영향을 주었습니다.
+   - 지원자가 직접 수행한 판단, 설계, 구현 또는 문제 해결 행동이 구체적으로 확인됩니다.
+   - 정량 수치 또는 자료에서 확인되는 구체적인 정성적 결과가 존재합니다.
+3. 후보가 여러 개이면 지원 직무 연관성, 본인 기여도, 프로젝트 영향도, 기술적 난이도, 결과의 명확성 순으로 우선합니다.
+4. 팀 전체의 작업과 지원자 개인의 기여를 명확히 구분합니다.
+5. 단순 참여, 반복 업무, 보조 작업, 사소한 수정, 결과가 확인되지 않는 구현은 제외합니다.
+6. 동일한 역량이나 기능을 설명하는 항목은 하나로 통합하고 가장 근거가 명확한 사례만 남깁니다.
+7. 단순히 업무를 완료한 사실을 성과로 표현하지 않습니다.
+8. 자료에 없는 역할, 판단, 영향 또는 성과를 추측하지 않습니다.
+9. 충분한 근거를 갖춘 항목이 적으면 개수를 억지로 채우지 않습니다.
+10. 중요도가 높은 순서로 최대 5개만 작성합니다.
+11. 각 항목의 title에는 핵심 기여를, description에는 본인의 판단과 행동을, metrics에는 그 결과 달라진 점을 작성합니다.
+""".strip()
 
 
 # ------------------------------------------------------------
@@ -548,7 +568,35 @@ def build_context(retrieved_documents: list[dict[str, Any]]) -> str:
     return "\n\n".join(context_parts)
 
 
+def resolve_project_display_name(
+    requested_name: Optional[str],
+    retrieved_documents: list[dict[str, Any]],
+) -> str:
+    """실제 이름을 우선하고 ID 기반 임시 이름은 사용자용 문구로 노출하지 않는다."""
+    candidates = [requested_name]
+    candidates.extend(
+        document.get("metadata", {}).get("project_name")
+        for document in retrieved_documents
+    )
+    for candidate in candidates:
+        if not candidate or not candidate.strip():
+            continue
+        name = candidate.strip()
+        if re.fullmatch(r"Project\s+\d+", name, flags=re.IGNORECASE):
+            continue
+        return name
+    return "이 프로젝트"
+
+
 def get_mode_instruction(answer_mode: str) -> str:
+    if answer_mode == "summary":
+        return """## 기간별 커밋·회의록 요약
+지정된 기간에 확인된 주요 작업, 결정, 문제 해결과 결과를 간결하게 정리합니다.
+프로젝트를 지칭할 때 제공된 실제 프로젝트명을 사용합니다. 실제 이름을 확인할 수 없으면
+'Project 14', '프로젝트 14'처럼 ID나 번호로 표현하지 말고 '이 프로젝트'라고 표현합니다.
+날짜는 원칙적으로 YYYY-MM-DD 형식의 연·월·일까지만 표시합니다. 시각이 사건의 순서나
+원인을 설명하는 데 반드시 필요한 경우가 아니면 시·분·초와 시간대 정보는 출력하지 않습니다.""".strip()
+
     if answer_mode == "portfolio":
         return "## 프로젝트 분석\n질문에 대한 핵심 내용을 설명합니다.\n\n## 포트폴리오용 문장\n전문적인 문장 2~4개를 작성합니다.\n\n## 강조하면 좋은 역량\n기술, 문제 해결 역량을 정리합니다.\n\n## 보완하면 좋은 정보\n부족한 수치나 역할을 알려줍니다."
     
@@ -585,7 +633,24 @@ def generate_answer(request: ChatRequest, retrieved_documents: list[dict[str, An
     if not retrieved_documents:
         return "질문과 관련된 프로젝트 자료를 찾지 못했습니다.\n\n자료를 먼저 등록해 주세요."
 
-    context = build_context(retrieved_documents)
+    context_documents = retrieved_documents
+    project_display_name = None
+    if request.answer_mode == "summary":
+        project_display_name = resolve_project_display_name(
+            request.project_name,
+            retrieved_documents,
+        )
+        context_documents = [
+            {
+                **document,
+                "metadata": {
+                    **document.get("metadata", {}),
+                    "project_name": project_display_name,
+                },
+            }
+            for document in retrieved_documents
+        ]
+    context = build_context(context_documents)
     mode_instruction = get_mode_instruction(request.answer_mode)
 
     instructions = f"""당신은 개발자의 프로젝트 기록을 분석하는 프로젝트 아카이빙 AI 어시스턴트입니다.
@@ -601,7 +666,12 @@ def generate_answer(request: ChatRequest, retrieved_documents: list[dict[str, An
 
 {mode_instruction}""".strip()
 
-    prompt = f"아래 자료를 근거로 답하세요.\n\n{context}\n\n질문: {request.question}\n모드: {request.answer_mode}\n\n마지막에는 아래 형식으로 참고자료 출처를 표시하세요.\n## 참고 자료\n- 프로젝트명 / 파일명"
+    project_guidance = (
+        f"\n표시할 프로젝트명: {project_display_name}\n"
+        if project_display_name
+        else ""
+    )
+    prompt = f"아래 자료를 근거로 답하세요.\n{project_guidance}\n{context}\n\n질문: {request.question}\n모드: {request.answer_mode}\n\n마지막에는 아래 형식으로 참고자료 출처를 표시하세요.\n## 참고 자료\n- 프로젝트명 / 파일명"
 
     response = client.models.generate_content(
         model=GEMINI_CHAT_MODEL,
@@ -771,7 +841,7 @@ def generate_portfolio_report(
         f"- 팀 규모: {team_size or '미입력'}\n"
         f"- 담당 역할: {role or '미입력'}"
     )
-    system_instruction = """
+    system_instruction = f"""
 당신은 수집된 개발 산출물을 근거로 개발자 포트폴리오 리포트를 작성하는 전문가입니다.
 결과는 채용 담당자와 기술 면접관이 빠르게 프로젝트의 가치, 설계 판단, 지원자의 기여와 문제 해결 능력을 파악할 수 있어야 합니다.
 
@@ -787,6 +857,8 @@ def generate_portfolio_report(
 9. retrospective의 technicalGrowth와 collaboration은 기록에서 드러난 학습만 요약합니다.
 10. futureRoadmap은 기존에 결정된 계획과 AI의 제안을 구분하여, 제안이라면 "제안:"으로 시작합니다.
 11. 출처나 인용 정보는 출력하지 않습니다. 인용은 서버가 검색 문서에서 결합합니다.
+
+{PORTFOLIO_CONTRIBUTION_SELECTION_RULE}
 """.strip()
     prompt = f"""
 [백엔드가 제공한 프로젝트 메타데이터]

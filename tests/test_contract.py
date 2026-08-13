@@ -27,6 +27,17 @@ def test_portfolio_contribution_requires_a_visible_achievement() -> None:
     assert contribution.metrics == ["여러 인증 제공자를 하나의 로그인 흐름으로 통합"]
 
 
+def test_portfolio_contribution_selection_rule_requires_significant_verified_work() -> None:
+    rule = services.PORTFOLIO_CONTRIBUTION_SELECTION_RULE
+
+    assert "지원자가 직접 책임지고 수행한 사실" in rule
+    assert "지원 직무 연관성, 본인 기여도, 프로젝트 영향도" in rule
+    assert "단순 참여, 반복 업무, 보조 작업, 사소한 수정" in rule
+    assert "개수를 억지로 채우지 않습니다" in rule
+    assert "최대 5개" in rule
+    assert "title에는 핵심 기여" in rule
+
+
 def _chunk(artifact_id: int, text: str, seq: int = 0) -> dict:
     return {
         "artifactId": artifact_id,
@@ -127,6 +138,45 @@ def test_search_filters_documents_before_summary_cutoff(tmp_path) -> None:
     )
 
     assert [document["text"] for document in found] == ["recent"]
+
+
+def test_summary_project_display_name_uses_real_name_or_generic_phrase() -> None:
+    named_document = {"metadata": {"project_name": "프로젝트 아카이브"}}
+    numbered_document = {"metadata": {"project_name": "Project 14"}}
+
+    assert services.resolve_project_display_name(None, [named_document]) == "프로젝트 아카이브"
+    assert services.resolve_project_display_name(None, [numbered_document]) == "이 프로젝트"
+    assert services.resolve_project_display_name("팀 아카이브", [numbered_document]) == "팀 아카이브"
+
+
+def test_summary_passes_name_and_summary_mode(monkeypatch) -> None:
+    captured = {}
+
+    monkeypatch.setattr(
+        ai_contract,
+        "retrieve_project_context",
+        lambda request, occurred_since=None: captured.update(
+            {"request": request, "occurred_since": occurred_since}
+        ) or [],
+    )
+    monkeypatch.setattr(ai_contract, "generate_answer", lambda request, documents: "요약")
+
+    response = TestClient(app).post(
+        "/summary",
+        json={
+            "projectId": 14,
+            "projectName": "프로젝트 아카이브",
+            "since": "2026-08-01T00:00:00Z",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"summary": "요약"}
+    assert captured["request"].answer_mode == "summary"
+    assert captured["request"].project_name == "프로젝트 아카이브"
+    assert captured["request"].question.startswith("2026-08-01 이후")
+    assert "T00:00:00" not in captured["request"].question
+    assert "시·분·초와 시간대 정보는 출력하지 않습니다" in services.get_mode_instruction("summary")
 
 
 def test_citations_are_deduplicated_by_artifact_without_losing_metadata() -> None:

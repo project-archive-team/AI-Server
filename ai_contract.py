@@ -36,6 +36,7 @@ class Chunk(BaseModel):
 
 class IndexRequest(BaseModel):
     projectId: int
+    projectName: Optional[str] = Field(default=None, min_length=1)
     chunks: list[Chunk]
 
 
@@ -46,6 +47,7 @@ class QuestionRequest(BaseModel):
 
 class SummaryRequest(BaseModel):
     projectId: int
+    projectName: Optional[str] = Field(default=None, min_length=1)
     since: datetime
 
 
@@ -167,7 +169,7 @@ class PortfolioReportResponse(BaseModel):
     techStack: list[PortfolioTechStack]
     systemArchitecture: str
     dataPipeline: str
-    contributions: list[PortfolioContribution]
+    contributions: list[PortfolioContribution] = Field(max_length=5)
     troubleshooting: list[PortfolioTroubleshooting]
     retrospective: PortfolioRetrospective
     missingEvidence: list[str]
@@ -221,7 +223,7 @@ def index_documents(request: IndexRequest) -> dict[str, Any]:
                 "metadata": {
                     "user_id": 0,
                     "project_id": request.projectId,
-                    "project_name": f"Project {request.projectId}",
+                    "project_name": request.projectName or f"Project {request.projectId}",
                     "artifact_id": chunk.artifactId,
                     "source_name": chunk.title,
                     "source_type": chunk.type,
@@ -259,10 +261,12 @@ def _answer(
     question: str,
     mode: str = "general",
     occurred_since: Optional[datetime] = None,
+    project_name: Optional[str] = None,
 ) -> dict[str, Any]:
     chat_request = ChatRequest(
         user_id=0,
         project_id=project_id,
+        project_name=project_name,
         question=question,
         answer_mode=mode,
         top_k=8,
@@ -281,8 +285,10 @@ def contract_chat(request: QuestionRequest) -> dict[str, Any]:
 def summary(request: SummaryRequest) -> dict[str, str]:
     result = _answer(
         request.projectId,
-        f"{request.since.isoformat()} 이후의 커밋과 회의록, 주요 진행 상황을 요약해줘.",
+        f"{request.since.date().isoformat()} 이후의 커밋과 회의록, 주요 진행 상황을 요약해줘.",
+        mode="summary",
         occurred_since=request.since,
+        project_name=request.projectName,
     )
     return {"summary": result["answer"]}
 
