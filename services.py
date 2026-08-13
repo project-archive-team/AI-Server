@@ -362,6 +362,7 @@ class SimpleVectorStore:
         project_id: Optional[int] = None,
         top_k: int = 5,
         occurred_since: Optional[datetime] = None,
+        source_types: Optional[set[str]] = None,
     ) -> list[dict[str, Any]]:
         with _STORE_LOCK:
             documents = self._load()
@@ -371,6 +372,8 @@ class SimpleVectorStore:
             if metadata.get("user_id") != user_id:
                 continue
             if project_id is not None and metadata.get("project_id") != project_id:
+                continue
+            if source_types is not None and metadata.get("source_type") not in source_types:
                 continue
             if occurred_since is not None:
                 occurred_at = metadata.get("occurred_at")
@@ -547,6 +550,7 @@ def ingest_project_document(request: DocumentRequest) -> int:
 def retrieve_project_context(
     request: ChatRequest,
     occurred_since: Optional[datetime] = None,
+    source_types: Optional[set[str]] = None,
 ) -> list[dict[str, Any]]:
     query_embedding = create_embedding(request.question)
     vector_store = SimpleVectorStore()
@@ -556,6 +560,7 @@ def retrieve_project_context(
         project_id=request.project_id,
         top_k=request.top_k,
         occurred_since=occurred_since,
+        source_types=source_types,
     )
 
 
@@ -623,7 +628,7 @@ def resolve_project_display_name(
         if not candidate or not candidate.strip():
             continue
         name = candidate.strip()
-        if re.fullmatch(r"Project\s+\d+", name, flags=re.IGNORECASE):
+        if re.fullmatch(r"(?:Project|프로젝트)\s*\d+", name, flags=re.IGNORECASE):
             continue
         return name
     return "이 프로젝트"
