@@ -85,6 +85,7 @@ Spring 백엔드가 파싱과 청킹을 마친 자료를 전달합니다.
 POST /index
 {
   "projectId": 1,
+  "projectName": "프로젝트 아카이브",
   "chunks": [
     {
       "artifactId": 10,
@@ -125,8 +126,10 @@ POST /index/delete
 }
 ```
 
-응답은 `answer`와 검색 근거인 `citations`를 포함합니다. `/summary`는 `projectId`와
-ISO 8601 형식의 `since`를 받아 해당 시점 이후의 자료만 검색합니다.
+응답은 `answer`와 검색 근거인 `citations`를 포함합니다. `/summary`는 `projectId`,
+선택 입력인 `projectName`, ISO 8601 형식의 `since`를 받아 해당 시점 이후의 자료만
+검색합니다. 요약에는 실제 프로젝트명을 사용하며, 이름을 확인할 수 없으면 `Project 14`
+같은 번호형 이름 대신 `이 프로젝트`라고 표현합니다.
 
 ## 취업 지원 도구
 
@@ -201,7 +204,8 @@ POST /portfolio/report
 
 - `oneLineSummary`, `executiveSummary`: 프로젝트 핵심 요약
 - `techStack`, `systemArchitecture`, `dataPipeline`: 기술 스택과 아키텍처
-- `contributions`: 역할, 기여와 검증 가능한 성과
+- `contributions`: 본인 수행 근거·직무 연관성·프로젝트 영향·검증 가능한 결과를 모두
+  충족하는 핵심 기여(중요도순 최대 5개)
 - `troubleshooting`: Situation / Action / Result 문제 해결 카드
 - `retrospective`: 기술 성장, 협업 인사이트와 향후 개선점
 - `missingEvidence`, `citations`: 부족한 근거와 원본 산출물 인용
