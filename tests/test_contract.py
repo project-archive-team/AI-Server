@@ -62,7 +62,11 @@ def test_index_replaces_existing_artifact_chunks_and_deletes_them(
 
     first = client.post(
         "/index",
-        json={"projectId": 7, "chunks": [_chunk(10, "old-a"), _chunk(10, "old-b", 1)]},
+        json={
+            "projectId": 7,
+            "projectName": "프로젝트 아카이브",
+            "chunks": [_chunk(10, "old-a"), _chunk(10, "old-b", 1)],
+        },
     )
     assert first.status_code == 200
     assert first.json()["indexed"] == 2
@@ -75,6 +79,7 @@ def test_index_replaces_existing_artifact_chunks_and_deletes_them(
 
     documents = SimpleVectorStore().documents
     assert [document["text"] for document in documents] == ["new"]
+    assert documents[0]["metadata"]["project_name"] == "프로젝트 아카이브"
 
     deleted = client.post(
         "/index/delete",
@@ -140,12 +145,41 @@ def test_search_filters_documents_before_summary_cutoff(tmp_path) -> None:
     assert [document["text"] for document in found] == ["recent"]
 
 
+def test_search_can_limit_summary_sources_to_commits_and_meetings(tmp_path) -> None:
+    store = SimpleVectorStore(tmp_path / "store.json")
+    store.add_documents(
+        [
+            {
+                "text": source_type,
+                "embedding": [1.0, 0.0],
+                "metadata": {
+                    "user_id": 0,
+                    "project_id": 3,
+                    "source_type": source_type,
+                },
+            }
+            for source_type in ("COMMIT", "MEETING", "CODE", "DOC")
+        ]
+    )
+
+    found = store.search(
+        [1.0, 0.0],
+        user_id=0,
+        project_id=3,
+        source_types={"COMMIT", "MEETING"},
+    )
+
+    assert {document["text"] for document in found} == {"COMMIT", "MEETING"}
+
+
 def test_summary_project_display_name_uses_real_name_or_generic_phrase() -> None:
     named_document = {"metadata": {"project_name": "프로젝트 아카이브"}}
     numbered_document = {"metadata": {"project_name": "Project 14"}}
+    korean_numbered_document = {"metadata": {"project_name": "프로젝트 14"}}
 
     assert services.resolve_project_display_name(None, [named_document]) == "프로젝트 아카이브"
     assert services.resolve_project_display_name(None, [numbered_document]) == "이 프로젝트"
+    assert services.resolve_project_display_name(None, [korean_numbered_document]) == "이 프로젝트"
     assert services.resolve_project_display_name("팀 아카이브", [numbered_document]) == "팀 아카이브"
 
 
@@ -155,8 +189,12 @@ def test_summary_passes_name_and_summary_mode(monkeypatch) -> None:
     monkeypatch.setattr(
         ai_contract,
         "retrieve_project_context",
-        lambda request, occurred_since=None: captured.update(
-            {"request": request, "occurred_since": occurred_since}
+        lambda request, occurred_since=None, source_types=None: captured.update(
+            {
+                "request": request,
+                "occurred_since": occurred_since,
+                "source_types": source_types,
+            }
         ) or [],
     )
     monkeypatch.setattr(ai_contract, "generate_answer", lambda request, documents: "요약")
@@ -174,6 +212,7 @@ def test_summary_passes_name_and_summary_mode(monkeypatch) -> None:
     assert response.json() == {"summary": "요약"}
     assert captured["request"].answer_mode == "summary"
     assert captured["request"].project_name == "프로젝트 아카이브"
+    assert captured["source_types"] == {"COMMIT", "MEETING"}
     assert captured["request"].question.startswith("2026-08-01 이후")
     assert "T00:00:00" not in captured["request"].question
     assert "시·분·초와 시간대 정보는 출력하지 않습니다" in services.get_mode_instruction("summary")

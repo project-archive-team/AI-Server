@@ -15,6 +15,7 @@ from services import (
     generate_career_interview_questions,
     generate_career_star,
     generate_portfolio_report,
+    resolve_project_display_name,
     retrieve_portfolio_context,
     retrieve_project_context,
 )
@@ -206,6 +207,22 @@ def index_documents(request: IndexRequest) -> dict[str, Any]:
     if len(embeddings) != len(request.chunks):
         raise HTTPException(500, "임베딩 결과 수가 청크 수와 일치하지 않습니다.")
 
+    store = SimpleVectorStore()
+    existing_project_documents = [
+        document
+        for document in store.documents
+        if document.get("metadata", {}).get("project_id") == request.projectId
+    ]
+    resolved_project_name = resolve_project_display_name(
+        request.projectName,
+        existing_project_documents,
+    )
+    stored_project_name = (
+        resolved_project_name
+        if resolved_project_name != "이 프로젝트"
+        else f"Project {request.projectId}"
+    )
+
     documents: list[dict[str, Any]] = []
     detected: set[str] = set()
     tech_keywords = {
@@ -223,7 +240,7 @@ def index_documents(request: IndexRequest) -> dict[str, Any]:
                 "metadata": {
                     "user_id": 0,
                     "project_id": request.projectId,
-                    "project_name": request.projectName or f"Project {request.projectId}",
+                    "project_name": stored_project_name,
                     "artifact_id": chunk.artifactId,
                     "source_name": chunk.title,
                     "source_type": chunk.type,
@@ -236,7 +253,6 @@ def index_documents(request: IndexRequest) -> dict[str, Any]:
             }
         )
 
-    store = SimpleVectorStore()
     artifact_ids = {chunk.artifactId for chunk in request.chunks}
     store.replace_artifacts(request.projectId, artifact_ids, documents)
     return {"indexed": len(documents), "techStack": sorted(detected)}
@@ -262,6 +278,7 @@ def _answer(
     mode: str = "general",
     occurred_since: Optional[datetime] = None,
     project_name: Optional[str] = None,
+    source_types: Optional[set[str]] = None,
 ) -> dict[str, Any]:
     chat_request = ChatRequest(
         user_id=0,
@@ -271,7 +288,11 @@ def _answer(
         answer_mode=mode,
         top_k=8,
     )
-    docs = retrieve_project_context(chat_request, occurred_since=occurred_since)
+    docs = retrieve_project_context(
+        chat_request,
+        occurred_since=occurred_since,
+        source_types=source_types,
+    )
     answer = generate_answer(chat_request, docs)
     return {"answer": answer, "citations": _citations(docs)}
 
@@ -289,6 +310,7 @@ def summary(request: SummaryRequest) -> dict[str, str]:
         mode="summary",
         occurred_since=request.since,
         project_name=request.projectName,
+        source_types={"COMMIT", "MEETING"},
     )
     return {"summary": result["answer"]}
 
