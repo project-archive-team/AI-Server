@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 import pytest
+from google.genai import errors
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -25,6 +26,51 @@ def test_portfolio_contribution_requires_a_visible_achievement() -> None:
     )
 
     assert contribution.metrics == ["여러 인증 제공자를 하나의 로그인 흐름으로 통합"]
+
+
+def test_gemini_generation_retries_temporary_server_error(monkeypatch) -> None:
+    attempts = []
+    delays = []
+    expected = object()
+
+    def generate_content(**kwargs):
+        attempts.append(kwargs)
+        if len(attempts) == 1:
+            raise errors.ServerError(503, {"error": {"message": "high demand"}})
+        return expected
+
+    monkeypatch.setattr(services.client.models, "generate_content", generate_content)
+
+    result = services.generate_content_with_retry(
+        model="test-model",
+        contents="질문",
+        config=services.types.GenerateContentConfig(),
+        sleep=delays.append,
+    )
+
+    assert result is expected
+    assert len(attempts) == 2
+    assert delays == [2.0]
+
+
+def test_gemini_generation_does_not_retry_non_transient_error(monkeypatch) -> None:
+    attempts = []
+
+    def generate_content(**kwargs):
+        attempts.append(kwargs)
+        raise errors.ClientError(400, {"error": {"message": "bad request"}})
+
+    monkeypatch.setattr(services.client.models, "generate_content", generate_content)
+
+    with pytest.raises(errors.ClientError):
+        services.generate_content_with_retry(
+            model="test-model",
+            contents="질문",
+            config=services.types.GenerateContentConfig(),
+            sleep=lambda _: None,
+        )
+
+    assert len(attempts) == 1
 
 
 def test_portfolio_contribution_selection_rule_requires_significant_verified_work() -> None:
