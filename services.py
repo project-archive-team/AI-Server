@@ -11,7 +11,7 @@ from uuid import uuid4
 import numpy as np
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
-from google.genai import types
+from google.genai import errors, types
 from google.genai.errors import ClientError
 
 # 프로젝트 내의 다른 모듈 불러오기
@@ -147,6 +147,39 @@ PORTFOLIO_CONTRIBUTION_SELECTION_RULE = """
 10. 중요도가 높은 순서로 최대 5개만 작성합니다.
 11. 각 항목의 title에는 핵심 기여를, description에는 본인의 판단과 행동을, metrics에는 그 결과 달라진 점을 작성합니다.
 """.strip()
+
+RETRYABLE_GEMINI_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def generate_content_with_retry(
+    *,
+    model: str,
+    contents: Any,
+    config: types.GenerateContentConfig,
+    max_attempts: int = 2,
+    retry_delay_seconds: float = 2.0,
+    sleep: Any = time.sleep,
+) -> Any:
+    """SDK 재시도 후에도 남은 일시적 Gemini 장애를 한 번 더 복구한다."""
+    if max_attempts < 1:
+        raise ValueError("max_attempts는 1 이상이어야 합니다.")
+
+    for attempt in range(max_attempts):
+        try:
+            return client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config,
+            )
+        except errors.APIError as error:
+            status_code = getattr(error, "code", None)
+            can_retry = (
+                status_code in RETRYABLE_GEMINI_STATUS_CODES
+                and attempt + 1 < max_attempts
+            )
+            if not can_retry:
+                raise
+            sleep(retry_delay_seconds * (attempt + 1))
 
 
 # ------------------------------------------------------------
@@ -468,7 +501,7 @@ def generate_initial_questions(user_id: int, project_id: int, answer_mode: str =
 """
 
     try:
-        response = client.models.generate_content(
+        response = generate_content_with_retry(
             model=GEMINI_CHAT_MODEL,
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -719,7 +752,7 @@ def generate_answer(request: ChatRequest, retrieved_documents: list[dict[str, An
     )
     prompt = f"아래 자료를 근거로 답하세요.\n{project_guidance}\n{context}\n\n질문: {request.question}\n모드: {request.answer_mode}\n\n마지막에는 아래 형식으로 참고자료 출처를 표시하세요.\n## 참고 자료\n- 프로젝트명 / 파일명"
 
-    response = client.models.generate_content(
+    response = generate_content_with_retry(
         model=GEMINI_CHAT_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
@@ -778,7 +811,7 @@ def generate_career_star(
 위 근거만 사용해 Situation, Task, Action, Result와 완성형 답변을 작성하세요.
 """.strip()
 
-    response = client.models.generate_content(
+    response = generate_content_with_retry(
         model=GEMINI_CHAT_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
@@ -834,7 +867,7 @@ def generate_career_interview_questions(
 질문 카테고리는 아키텍처, 성능, 장애 대응, 데이터, 협업 중 실제 근거가 있는 영역에서 선택하세요.
 """.strip()
 
-    response = client.models.generate_content(
+    response = generate_content_with_retry(
         model=GEMINI_CHAT_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
@@ -922,7 +955,7 @@ def generate_portfolio_report(
 - 회고 및 배운 점(기술 성장, 협업 인사이트, 향후 개선점)
 """.strip()
 
-    response = client.models.generate_content(
+    response = generate_content_with_retry(
         model=GEMINI_CHAT_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
