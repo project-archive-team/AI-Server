@@ -23,10 +23,11 @@ class ChatRequest(BaseModel):
     user_id: int
     question: str = Field(min_length=1)
     project_id: Optional[int] = None
+    project_name: Optional[str] = None
     top_k: int = Field(default=5, ge=1, le=10)
     answer_mode: str = Field(
         default="general",
-        pattern="^(general|portfolio|interview)$",
+        pattern="^(general|portfolio|interview|summary)$",
     )
 
 
