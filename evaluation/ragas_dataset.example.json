@@ -1,0 +1,16 @@
+[
+  {
+    "projectId": -900001,
+    "question": "이 프로젝트의 백엔드와 AI 서버는 어떤 기술로 구현했나요?",
+    "reference": "백엔드는 Java와 Spring Boot, 데이터베이스는 PostgreSQL을 사용하고 AI 서버는 Python과 FastAPI로 구현했습니다.",
+    "answerMode": "general",
+    "topK": 8
+  },
+  {
+    "projectId": -900001,
+    "question": "Redis 캐시 장애의 원인과 해결 방법은 무엇이었나요?",
+    "reference": "장애 원인은 TTL 설정 누락이었으며 이후 모든 캐시에 기본 TTL 30분을 적용했습니다.",
+    "answerMode": "general",
+    "topK": 8
+  }
+]

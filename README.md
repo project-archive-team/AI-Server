@@ -93,3 +93,42 @@ POST /portfolio/report
 
 코드·문서 원문 뷰어와 커밋·회의록 목록은 AI 생성 결과가 아니라 백엔드의 원본
 산출물 API를 사용합니다.
+
+## RAGAS 품질 평가
+
+RAGAS는 운영 요청 경로와 분리된 배치 CLI로 실행합니다. 평가 과정에서는 실제
+`retrieve_project_context`와 `generate_answer`를 호출하므로 평가 대상 프로젝트가
+먼저 색인되어 있어야 하며 Gemini API 사용량이 발생합니다.
+
+Python 3.9~3.13 환경에서 평가 의존성을 설치합니다.
+
+```bash
+pip install -r requirements-eval.txt
+```
+
+예제 골든 데이터셋을 복사한 뒤 프로젝트 ID, 질문, 기준 답변을 실제 데이터에 맞게
+수정하고 실행합니다.
+
+```bash
+python ragas_eval.py evaluation/ragas_dataset.example.json
+```
+
+기본 평가지표는 다음과 같습니다.
+
+- `faithfulness`: 답변이 검색 문맥에 근거하는지 평가
+- `answer_relevancy`: 답변이 질문 의도에 맞는지 평가
+- `context_precision`: 관련 근거가 검색 상단에 배치되는지 평가
+- `context_recall`: 기준 답변에 필요한 근거를 충분히 검색했는지 평가
+- `responseTimeMs`: 검색 시작부터 답변 생성 완료까지 걸린 시간을 밀리초로 측정
+
+결과는 기본적으로 `data/ragas_results/ragas-<timestamp>.json`에 저장됩니다. CI나
+회귀 검증에서 평균 점수 기준을 적용할 수도 있습니다.
+
+```bash
+python ragas_eval.py evaluation/ragas_dataset.example.json \
+  --threshold faithfulness=0.8 \
+  --threshold context_recall=0.7
+```
+
+RAGAS judge 호출 없이 검색 문맥과 실제 답변만 점검하려면 `--collect-only`를
+사용합니다.
