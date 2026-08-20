@@ -264,6 +264,110 @@ def test_summary_passes_name_and_summary_mode(monkeypatch) -> None:
     assert "시·분·초와 시간대 정보는 출력하지 않습니다" in services.get_mode_instruction("summary")
 
 
+def test_chat_passes_selected_project_name(monkeypatch) -> None:
+    captured = {}
+
+    monkeypatch.setattr(
+        ai_contract,
+        "retrieve_project_context",
+        lambda request, occurred_since=None, source_types=None: captured.update(
+            {"request": request}
+        ) or [],
+    )
+    monkeypatch.setattr(ai_contract, "generate_answer", lambda request, documents: "답변")
+
+    response = TestClient(app).post(
+        "/chat",
+        json={
+            "projectId": 14,
+            "projectName": "학술제 프로젝트 아카이빙",
+            "question": "임베딩 오류를 어떻게 해결했나요?",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "답변"
+    assert captured["request"].project_name == "학술제 프로젝트 아카이빙"
+
+
+def test_generate_answer_replaces_numbered_project_metadata(monkeypatch) -> None:
+    captured = {}
+
+    class Response:
+        text = "생성 답변"
+
+    monkeypatch.setattr(
+        services,
+        "generate_content_with_retry",
+        lambda **kwargs: captured.update(kwargs) or Response(),
+    )
+    request = services.ChatRequest(
+        user_id=0,
+        project_id=14,
+        project_name="학술제 프로젝트 아카이빙",
+        question="질문",
+        answer_mode="general",
+    )
+
+    answer = services.generate_answer(
+        request,
+        [
+            {
+                "text": "근거",
+                "score": 0.9,
+                "metadata": {
+                    "project_name": "Project 14",
+                    "source_name": "README.md",
+                    "source_type": "DOC",
+                },
+            }
+        ],
+    )
+
+    assert answer == "생성 답변"
+    assert "표시할 프로젝트명: 학술제 프로젝트 아카이빙" in captured["contents"]
+    assert "프로젝트명: 학술제 프로젝트 아카이빙" in captured["contents"]
+    assert "Project 14" not in captured["contents"]
+
+
+def test_generate_answer_uses_generic_name_when_only_numbered_name_exists(monkeypatch) -> None:
+    captured = {}
+
+    class Response:
+        text = "생성 답변"
+
+    monkeypatch.setattr(
+        services,
+        "generate_content_with_retry",
+        lambda **kwargs: captured.update(kwargs) or Response(),
+    )
+    request = services.ChatRequest(
+        user_id=0,
+        project_id=14,
+        question="질문",
+        answer_mode="general",
+    )
+
+    services.generate_answer(
+        request,
+        [
+            {
+                "text": "근거",
+                "score": 0.9,
+                "metadata": {
+                    "project_name": "Project 14",
+                    "source_name": "README.md",
+                    "source_type": "DOC",
+                },
+            }
+        ],
+    )
+
+    assert "표시할 프로젝트명: 이 프로젝트" in captured["contents"]
+    assert "프로젝트명: 이 프로젝트" in captured["contents"]
+    assert "Project 14" not in captured["contents"]
+
+
 def test_citations_are_deduplicated_by_artifact_without_losing_metadata() -> None:
     documents = [
         {
@@ -321,6 +425,14 @@ def test_interview_prompt_requests_answers_for_each_follow_up_question() -> None
     assert "질문에서 직접 요구하거나" in instruction
     assert "개별 자료 삭제 API" in instruction
     assert "프로젝트 단위 삭제 API" in instruction
+
+
+def test_general_prompt_stays_with_verified_question_evidence() -> None:
+    instruction = services.get_mode_instruction("general")
+
+    assert "질문에 필요한 사실만 2~5문장" in instruction
+    assert "추론이나 일반적인 개선 제안으로 채우지 않습니다" in instruction
+    assert "## 강점" not in instruction
 
 
 def test_career_role_alignment_rule_prioritizes_verified_personal_contribution() -> None:

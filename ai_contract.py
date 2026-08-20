@@ -43,6 +43,7 @@ class IndexRequest(BaseModel):
 
 class QuestionRequest(BaseModel):
     projectId: int
+    projectName: Optional[str] = Field(default=None, min_length=1)
     question: str = Field(min_length=1)
 
 
@@ -299,7 +300,11 @@ def _answer(
 
 @router.post("/chat")
 def contract_chat(request: QuestionRequest) -> dict[str, Any]:
-    return _answer(request.projectId, request.question)
+    return _answer(
+        request.projectId,
+        request.question,
+        project_name=request.projectName,
+    )
 
 
 @router.post("/summary")
@@ -317,7 +322,12 @@ def summary(request: SummaryRequest) -> dict[str, str]:
 
 @router.post("/interview")
 def interview(request: QuestionRequest) -> dict[str, Any]:
-    return _answer(request.projectId, request.question, mode="interview")
+    return _answer(
+        request.projectId,
+        request.question,
+        mode="interview",
+        project_name=request.projectName,
+    )
 
 
 @router.post("/career/star", response_model=CareerStarResponse)
