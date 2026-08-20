@@ -1,0 +1,331 @@
+[
+  {
+    "projectId": 101,
+    "question": "이 프로젝트의 RAG 파이프라인에서 문서 청킹과 임베딩 전략은 어떻게 설계되었고, 그 이유는 무엇인가요?",
+    "reference": "프로젝트는 Spring 백엔드에서 수집·파싱·청킹한 문서를 Gemini 임베딩으로 변환하고 data/vector_store.json에 메타데이터와 함께 저장합니다. 청킹과 임베딩은 검색 정밀도와 문맥 길이 제한을 고려해 설계되었습니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "검색 결과의 근거(citations)를 신뢰성 있게 제시하도록 생성 모델에 어떻게 지시하나요?",
+    "reference": "질문 임베딩으로 프로젝트 필터+코사인 유사도 검색을 수행해 상위 문맥을 추출하고, 생성 모델 입력에 원문 인용 정보를 포함하여 답변과 함께 근거를 출력하도록 합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "검색된 문맥이 불충분하거나 모호할 때 생성 모델의 Hallucination을 줄이기 위한 전략은 무엇인가요?",
+    "reference": "검색 문맥 부족 시 제한된 출력(예: 답변 불충분)을 허용하고, missingEvidence 필드로 근거 부족을 명시하며, 생성 지침에서 근거 기반 응답만 허용합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "프로젝트 색인(POST /index) 요청에서 중복 artifact를 재색인할 때 어떤 동작을 하나요?",
+    "reference": "같은 프로젝트와 artifact를 다시 색인하면 기존 청크를 중복 추가하지 않고 새 청크로 교체하는 동작을 수행합니다.",
+    "answerMode": "general",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "data/vector_store.json 구조에 포함되는 주요 메타데이터 필드는 무엇이며, 왜 필요한가요?",
+    "reference": "벡터 저장소에는 artifactId, projectId, type, path, url, seq, text 및 임베딩 벡터가 포함되어 프로젝트 필터링과 근거 추적에 사용됩니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "검색 정확도를 높이기 위해 질문 전처리(쿼리 확장 또는 정규화)를 적용한 적이 있나요? 적용했다면 어떤 방식인가요?",
+    "reference": "질문 임베딩 전 텍스트 정규화와 키워드 확장(동의어 매핑)을 적용하면 임베딩 기반 검색의 일관성이 향상됩니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "RAGAS 평가에서 context_recall이 낮게 나올 때 주로 어느 부분을 점검하나요?",
+    "reference": "context_recall이 낮으면 청크 분할 정책, 임베딩 모델 불일치, 프로젝트 필터링 파라미터, topK 설정을 점검해야 합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "배포 환경에서 모델 API 키 같은 비밀을 안전하게 관리하는 방법은 무엇인가요?",
+    "reference": "서비스 유닛 파일과 배포 스크립트는 .env를 사용하며, 실제 배포에서는 환경 변수와 비밀 매니저(예: AWS Secrets Manager)를 권장합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "프론트엔드와 백엔드 통합에서 인증 토큰은 어떻게 저장·전달되나요?",
+    "reference": "웹 UI는 sessionStorage에 accessToken와 refreshToken을 저장하고 /backend 프록시를 통해 인증 헤더를 전달합니다 (index.html 참조).",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "팀원 간 충돌(conflict)이 발생했을 때 어떻게 조율하고 해결했는지 STAR 형식으로 설명해 주세요.",
+    "reference": "STAR 기법(Indeed, The Muse)은 Situation·Task·Action·Result 형식으로 사례를 구조화해 전달하도록 권장합니다.",
+    "answerMode": "portfolio",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "프로젝트에서 발생한 심각한 버그를 빠르게 해결한 경험을 STAR 형식으로 설명해 주세요.",
+    "reference": "면접 STAR 가이드(Indeed, The Muse)는 문제 해결 사례를 간결한 상황·과제·행동·결과로 정리하도록 권장합니다.",
+    "answerMode": "portfolio",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "서비스의 응답 지연(latency)이 증가했을 때 근본 원인 분석과 해결책은 무엇이었나요?",
+    "reference": "응답 지연 원인으로는 임베딩/생성 모델 호출 지연, 검색 비용, 동시성 한계, I/O 병목 등이 있으며 모니터링과 프로파일링으로 병목을 찾아 개선합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "CI 파이프라인에서 테스트가 실패했을 때 원인 분석과 조치 사례를 STAR로 설명해 주세요.",
+    "reference": "프로젝트는 pytest 기반 테스트를 포함하며 CI에서는 Python 3.9 환경에서 pytest를 실행해 빌드 검증을 수행합니다 (README 참조).",
+    "answerMode": "portfolio",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "백엔드와 AI 서버 간 API 계약에서 backward compatibility를 보장하기 위한 접근은 무엇인가요?",
+    "reference": "API 계약은 명세 기반으로 엔드포인트와 페이로드를 문서화하며 버전 관리, 선택적 필드, 멱등성 등을 통해 호환성을 유지합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "프로젝트에서 본인이 맡은 역할(기술적 책임)을 STAR 형식으로 설명해 주세요.",
+    "reference": "생성형 취업 도구는 지원 직무와 자료에서 확인되는 본인 역할을 우선적으로 사용하며, 문서 근거가 없는 내용은 missingEvidence로 표시합니다.",
+    "answerMode": "portfolio",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "프론트엔드에서 프로젝트 목록과 세부 자료를 효율적으로 렌더링하기 위해 어떤 최적화를 적용했나요?",
+    "reference": "index.html은 클라이언트에서 프로젝트 목록을 비동기 로드하고 캐싱(token 기반 세션)으로 렌더링 성능을 개선합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "프로젝트 색인 시 청크 크기와 문장 경계 처리의 설계 기준은 무엇이었나요?",
+    "reference": "청크 크기는 생성 모델의 토큰 제한과 검색 정밀도 사이의 트레이드오프로 설정하며 문장 경계 보존을 우선합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "RAG 응답의 공정성(fairness)이나 민감 정보 노출을 점검한 경험이 있나요? 어떻게 처리했나요?",
+    "reference": "민감정보는 색인 전 필터링 또는 익명화하고, 답변에서 민감정보가 노출될 경우 missingEvidence로 표시하거나 응답을 제한합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "프로젝트에서 도입한 성능 지표(예: responseTimeMs)로 어떻게 개선 사이클을 돌렸나요?",
+    "reference": "RAGAS 평가와 운영 모니터링에서 평균 응답시간, 검색 정밀도 등을 수집해 병목 식별과 모델/검색 파라미터 튜닝에 활용합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "면접관이 ‘팀을 이끌며 갈등을 조정한 경험’을 물으면 어떻게 답하시겠습니까? (STAR)",
+    "reference": "STAR 면접 가이드는 상황·과제·행동·결과로 사례를 구조화하라고 권장합니다 (Indeed, The Muse).",
+    "answerMode": "portfolio",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "실제 운영 중 발생한 데이터 불일치 문제를 발견하고 해결한 절차를 STAR로 설명해 주세요.",
+    "reference": "운영에서 데이터 불일치는 파이프라인 버그, 동기화 문제 또는 파싱 오류에서 발생하며 원인 분석→롤백/패치→후속 검증 순으로 처리합니다.",
+    "answerMode": "portfolio",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "프론트엔드에서 저장된 accessToken을 사용한 보안 고려사항과 개선 방안은 무엇인가요?",
+    "reference": "index.html은 현재 sessionStorage 사용을 보여주며, 보안을 위해 HttpOnly 쿠키, CSRF 보호, 토큰 만료 및 재발급 정책을 권장합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "프로젝트에서 모델 선택(임베딩/생성)을 바꿔야 할 때 어떤 검증 절차를 거치나요?",
+    "reference": "모델 변경 시 평가셋(예: RAGAS)을 사용해 faithfulness, answer_relevancy, context_precision, context_recall과 응답시간을 비교합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "대규모 동시 요청이 들어올 때 벡터 검색과 생성 모델 호출의 병렬화를 어떻게 설계했나요?",
+    "reference": "병렬화는 비동기 I/O, 요청 큐, 서킷 브레이커, 모델 호출의 스로틀링/스케일링으로 처리하며 캐시를 도입해 반복 쿼리 부하를 줄입니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "코드 리뷰에서 반복적으로 지적받았던 부분과 그것을 어떻게 개선했는지 STAR로 설명해 주세요.",
+    "reference": "코드 리뷰는 협업 품질을 높이며 개선 사례는 테스트 추가, 리팩터링, 문서화 등의 행동으로 요약됩니다.",
+    "answerMode": "portfolio",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "프로젝트에서 중요하게 고려한 데이터 보존 정책(데이터 수명주기)은 무엇인가요?",
+    "reference": "벡터 및 원문 데이터에 대한 보존 정책은 규정 준수와 저장 비용을 고려해 보관 기간과 익명화 정책을 정의합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "서비스 장애(예: 모델 API 실패) 시 자동 복구나 롤백 전략은 무엇인가요?",
+    "reference": "서비스는 재시도/서킷 브레이커, 페일오버, 배포 롤백 절차와 모니터링 알림을 통해 안정성을 확보합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "RAG 답변을 채점하는 자동화된 평가 파이프라인을 설계한다면 어떤 지표와 절차를 포함하겠습니까?",
+    "reference": "RAGAS는 faithfulness, answer_relevancy, context_precision, context_recall, 응답시간을 포함하며 자동화는 데이터셋→검색→생성→점수 산출→리포트 과정으로 구성됩니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "외부 문서(예: GitHub, Notion) 수집 시 텍스트 파싱과 메타데이터 추출에서 직면한 이슈와 해결책은 무엇이었나요?",
+    "reference": "외부 문서 파싱 시 형식 다양성, 인코딩 문제, URL/경로 메타데이터 추출 오류가 발생하며 robust parser와 포맷별 처리 로직으로 대응합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "우선순위가 높은 작업이 몰렸을 때 어떻게 처리했는가에 대한 STAR 답변을 제공해 주세요.",
+    "reference": "STAR 가이드는 우선순위 조정 사례를 상황·과제·행동·결과로 정리해 전달하라고 권장합니다.",
+    "answerMode": "portfolio",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "다른 팀(프론트엔드)과 협업하며 인터페이스 문제를 조정한 경험을 STAR 형식으로 설명해 주세요.",
+    "reference": "웹 UI와 백엔드 통합은 API 명세, 에러 핸들링, 토큰 인증 방식 조율 등을 포함하며 협업 사례는 STAR로 구조화할 수 있습니다.",
+    "answerMode": "portfolio",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "프론트엔드 성능 문제(렌더 블록, 대용량 리스트 렌더링)를 해결한 경험을 기술적으로 설명해 주세요.",
+    "reference": "index.html은 비동기 로딩과 카드 기반 렌더링을 사용하며 성능 개선 방법으로 가상화, 지연 로딩, 캐싱을 권장합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "인증·인가 흐름에서 발생한 보안 취약점을 발견하고 개선한 사례를 STAR로 설명해 주세요.",
+    "reference": "보안 취약점 개선은 토큰 저장 방식, 권한 체크 누락, 민감정보 노출 점검 등을 포함하며 패치와 재검증이 필요합니다.",
+    "answerMode": "portfolio",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "RAG 답변의 근거 추출 우선순위를 정할 때 고려하는 요소들은 무엇인가요?",
+    "reference": "우선순위는 유사도 점수, 출처 신뢰도, 최신성, 중복성 제거 등을 고려해 결정됩니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "로그·모니터링 전략과 중요한 지표(KPI)를 설명해 주세요.",
+    "reference": "주요 지표로는 요청량, 평균 응답시간, 오류율, 모델 호출 비용, RAGAS 지표 등을 수집하며 로그는 구조화해서 알람과 대시보드에 연결합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "온보딩 문서나 코드베이스 가독성을 개선한 사례를 STAR로 설명해 주세요.",
+    "reference": "온보딩 개선은 README, API 계약 문서, 예제, 자동화된 테스트 및 코드 스타일 가이드 추가로 이루어집니다.",
+    "answerMode": "portfolio",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "데이터·프라이버시 규정 준수를 위해 어떤 설계 결정을 내렸나요?",
+    "reference": "개인정보는 색인 전 익명화하거나 보관 기간을 제한하고 접근 제어와 감사 로그를 통해 규정 준수를 지원합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "A/B 테스트로 모델 변경의 효과를 검증한 경험과 방법을 설명해 주세요.",
+    "reference": "모델 변경은 일부 트래픽 샘플링으로 A/B 테스트를 수행하고 RAGAS 지표와 사용자 피드백을 비교해 채택 여부를 결정합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "동료와의 의견 차이를 조정한 경험을 STAR로 설명해 주세요.",
+    "reference": "STAR 가이드는 행동 중심의 구체 사례를 제시해 면접에서 신뢰감을 주라고 권장합니다.",
+    "answerMode": "portfolio",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "검색 결과 재현성을 확보하기 위한 데이터 버전 관리 방식은 무엇인가요?",
+    "reference": "임베딩 모델 버전, 청크 생성 파라미터, 벡터 스토어 스냅샷을 기록해 특정 시점의 검색 재현성을 확보합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "성능·품질 개선을 위해 제안하고 실행한 변화와 결과를 STAR로 설명해 주세요.",
+    "reference": "실제 개선 사례는 검색 파라미터 튜닝, 캐싱 도입, 모델 교체, 테스트 강화 등으로 측정 가능한 개선을 달성한 경험을 포함합니다.",
+    "answerMode": "portfolio",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "민감한 API 호출을 프록시(/backend)로 우회하도록 한 이유와 장점은 무엇인가요?",
+    "reference": "프록시를 사용하면 CORS, 인증 토큰 노출 방지, API 키 보호, 중앙화된 로깅과 접근 제어가 용이해집니다 (index.html 참고).",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "의사결정에 데이터 근거를 수집하고 설득했던 경험을 STAR로 설명해 주세요.",
+    "reference": "의사결정은 로그·RAGAS 평가·유저 피드백을 근거로 수집하고 실험 결과를 통해 설득하는 방식을 사용합니다.",
+    "answerMode": "portfolio",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "RAG 답변 생성 시 missingEvidence를 표시하는 기준은 무엇인가요?",
+    "reference": "검색된 문맥에서 답변을 뒷받침할 수 없는 주장이나 수치는 missingEvidence로 표기하며, 이는 README의 취업 도구 원칙과 일치합니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "팀 내 기술적 우선순위를 조정했던 경험을 STAR로 설명해 주세요.",
+    "reference": "우선순위 조정은 비즈니스 임팩트, 리스크, 개발 비용을 기준으로 하고 이해관계자 합의를 통해 실행합니다.",
+    "answerMode": "portfolio",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "RAGAS 평가용 데이터셋 검수 프로세스를 어떻게 설계해야 하나요?",
+    "reference": "평가 데이터셋은 질문·기준답안 초안→인간 검수(근거 확인·정답성 검증)→최종 골든셋으로 구성하며 README의 권장 절차를 따릅니다.",
+    "answerMode": "interview",
+    "topK": 8
+  },
+  {
+    "projectId": 101,
+    "question": "면접 준비를 위해 STAR 예시를 외부 자료(Indeed, The Muse)로 보강한 방법과 장점을 설명해 주세요.",
+    "reference": "Indeed와 The Muse 같은 가이드는 STAR 구조와 예시를 제공해 답변을 더 명확하고 설득력 있게 만드는 데 유용합니다.",
+    "answerMode": "general",
+    "topK": 8
+  }
+]
