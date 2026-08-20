@@ -13,6 +13,7 @@ from typing import Any, Callable, Literal, Optional
 from pydantic import BaseModel, Field, ValidationError
 
 from config import (
+    API_KEY,
     GEMINI_CHAT_MODEL,
     GEMINI_EMBEDDING_MODEL,
     client,
@@ -60,6 +61,7 @@ def collect_rag_samples(
     answer_generator: Optional[
         Callable[[ChatRequest, list[dict[str, Any]]], str]
     ] = None,
+    default_user_id: int = 0,
     clock: Callable[[], float] = perf_counter,
 ) -> list[dict[str, Any]]:
     retrieve = retriever or retrieve_project_context
@@ -67,8 +69,9 @@ def collect_rag_samples(
     samples: list[dict[str, Any]] = []
 
     for case in cases:
+        user_id = default_user_id or 0
         request = ChatRequest(
-            user_id=0,
+            user_id=user_id,
             project_id=case.projectId,
             question=case.question,
             answer_mode=case.answerMode,
@@ -97,6 +100,8 @@ def collect_rag_samples(
 
 def build_ragas_metrics() -> dict[str, Any]:
     try:
+        import instructor
+        import litellm
         from ragas.embeddings import GoogleEmbeddings
         from ragas.llms import llm_factory
         from ragas.metrics.collections import (
@@ -112,10 +117,18 @@ def build_ragas_metrics() -> dict[str, Any]:
         ) from error
 
     evaluator_model = os.getenv("RAGAS_EVALUATOR_MODEL", GEMINI_CHAT_MODEL)
+    litellm_model = (
+        evaluator_model
+        if "/" in evaluator_model
+        else f"gemini/{evaluator_model}"
+    )
+    evaluator_client = instructor.from_litellm(litellm.acompletion)
     evaluator_llm = llm_factory(
-        evaluator_model,
+        litellm_model,
         provider="google",
-        client=client,
+        client=evaluator_client,
+        adapter="litellm",
+        api_key=API_KEY,
     )
     evaluator_embeddings = GoogleEmbeddings(
         client=client,
@@ -255,6 +268,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="RAG 응답과 검색 문맥만 수집하고 RAGAS judge 평가는 생략합니다.",
     )
+    parser.add_argument(
+        "--user-id",
+        type=int,
+        default=0,
+        help="검색 시 사용할 user_id (기본 0).",
+    )
     return parser
 
 
@@ -264,7 +283,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     try:
         thresholds = parse_thresholds(args.threshold)
         cases = load_cases(args.dataset)
-        collected = collect_rag_samples(cases)
+        collected = collect_rag_samples(cases, default_user_id=args.user_id)
         samples = collected if args.collect_only else run_ragas_evaluation(collected)
     except (RuntimeError, ValueError) as error:
         parser.error(str(error))

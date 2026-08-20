@@ -117,11 +117,15 @@ POST /index/delete
 
 ### 기본 RAG 답변
 
-`/chat`과 `/interview`의 요청 형식은 같습니다.
+`/chat`과 `/interview`의 요청 형식은 같습니다. 사용자가 선택한 프로젝트 이름을
+답변에 표시하려면 `projectName`을 함께 전달합니다. 저장된 색인에 ID 기반 임시 이름만
+있고 요청에도 실제 이름이 없으면 답변에서는 `Project 14` 대신 `이 프로젝트`라고
+표현합니다.
 
 ```json
 {
   "projectId": 1,
+  "projectName": "프로젝트 아카이브",
   "question": "캐시를 도입한 이유와 본인의 기여를 설명해 주세요."
 }
 ```

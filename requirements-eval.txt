@@ -1,2 +1,5 @@
 -r requirements.txt
 ragas==0.4.3
+litellm==1.97.0
+# RAGAS 0.4.3 imports the legacy VertexAI adapter removed in 0.4.x.
+langchain-community==0.3.31

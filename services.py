@@ -705,30 +705,34 @@ def get_mode_instruction(answer_mode: str) -> str:
 {INTERVIEW_SPOKEN_ANSWER_RULE}
 """.strip()
 
-    return "## 핵심 답변\n직접 답변을 작성합니다.\n\n## 프로젝트에서 확인된 내용\n역할, 기술, 해결 과정을 요약합니다.\n\n## 강점\n드러나는 강점을 요약합니다.\n\n## 더 보완하면 좋은 점\n추가 보완점을 알려줍니다."
+    return """## 핵심 답변
+질문에 필요한 사실만 2~5문장으로 직접 답변합니다.
+
+## 프로젝트에서 확인된 내용
+핵심 답변을 뒷받침하는 역할, 기술, 동작 또는 결과만 간결하게 정리합니다.
+
+## 확인이 필요한 내용
+질문에 필요한 정보가 자료에 없을 때만 작성하며, 추론이나 일반적인 개선 제안으로 채우지 않습니다.""".strip()
 
 
 def generate_answer(request: ChatRequest, retrieved_documents: list[dict[str, Any]]) -> str:
     if not retrieved_documents:
         return "질문과 관련된 프로젝트 자료를 찾지 못했습니다.\n\n자료를 먼저 등록해 주세요."
 
-    context_documents = retrieved_documents
-    project_display_name = None
-    if request.answer_mode == "summary":
-        project_display_name = resolve_project_display_name(
-            request.project_name,
-            retrieved_documents,
-        )
-        context_documents = [
-            {
-                **document,
-                "metadata": {
-                    **document.get("metadata", {}),
-                    "project_name": project_display_name,
-                },
-            }
-            for document in retrieved_documents
-        ]
+    project_display_name = resolve_project_display_name(
+        request.project_name,
+        retrieved_documents,
+    )
+    context_documents = [
+        {
+            **document,
+            "metadata": {
+                **document.get("metadata", {}),
+                "project_name": project_display_name,
+            },
+        }
+        for document in retrieved_documents
+    ]
     context = build_context(context_documents)
     mode_instruction = get_mode_instruction(request.answer_mode)
 
@@ -737,19 +741,16 @@ def generate_answer(request: ChatRequest, retrieved_documents: list[dict[str, An
 
 중요 규칙:
 1. 답변을 시작할 때 "제공된 자료에 따르면", "등록된 자료는 ~를 보여줍니다"와 같이 자료를 언급하는 서론을 절대 쓰지 마세요.
-2. 질문에 대해 즉시 "저는 ~ 프로젝트에서 ~를 담당했습니다"와 같이 사용자의 관점에서 직접적이고 두괄식으로 답변을 시작하세요.
+2. 질문에 대해 즉시 직접적이고 두괄식으로 답변하세요. 프로젝트 자료에서 지원자 본인의 역할이 확인되는 경우에만 "저는 ~를 담당했습니다"처럼 1인칭으로 표현하고, 확인되지 않은 역할을 만들지 마세요.
 3. 없는 사실을 지어내지 마세요.
 4. 불확실한 내용은 "등록된 자료에서 확인하기 어렵습니다"라고 답하세요.
 5. 한국어 Markdown으로 작성하세요.
-6. 같은 내용을 반복하지 마세요.   
+6. 같은 내용을 반복하지 마세요.
+7. 프로젝트를 지칭할 때 아래에 지정된 프로젝트명을 사용하세요. "Project 14", "프로젝트 14"처럼 프로젝트 ID를 이름으로 노출하지 마세요.
 
 {mode_instruction}""".strip()
 
-    project_guidance = (
-        f"\n표시할 프로젝트명: {project_display_name}\n"
-        if project_display_name
-        else ""
-    )
+    project_guidance = f"\n표시할 프로젝트명: {project_display_name}\n"
     prompt = f"아래 자료를 근거로 답하세요.\n{project_guidance}\n{context}\n\n질문: {request.question}\n모드: {request.answer_mode}\n\n마지막에는 아래 형식으로 참고자료 출처를 표시하세요.\n## 참고 자료\n- 프로젝트명 / 파일명"
 
     response = generate_content_with_retry(
